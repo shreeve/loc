@@ -1,4 +1,4 @@
-# loc in Rig. Rules: SPEC.md. Design: rig/PLAN.md.
+# loc in Rig. Rules: SPEC.md. Design: rig/DESIGN.md.
 
 use loc
 use std.os
