@@ -5,7 +5,7 @@
 # `rig/test.sh NAME...` runs only those. Build first with rig/build.sh.
 
 set -u
-[[ -z ${LOC:-} || $LOC == /* ]] || LOC=$PWD/$LOC
+[[ -z ${LOC:-} || $LOC == /* || $LOC != */* ]] || LOC=$PWD/$LOC
 cd "$(dirname "$0")/.."
 ROOT=$PWD
 LOC=${LOC:-$ROOT/bin/loco}  # LOC=target/release/loc runs the same checks on the Rust loc

@@ -188,8 +188,8 @@ of `test.sh`. The Rig version follows SPEC, or the closest Rig gives.
 - **A closed stdout.** The exit code is 1 from the Rig runtime, 0 from
   Rust.
 - **Lower-casing of skipped labels.** Rust uses Unicode's rules, loco
-  ASCII only, as the extension lookup in both does: `menu.CAFÉ` is
-  `.café` in Rust and `.cafÉ` in loco. Accepted.
+  ASCII only, as the extension lookup in both does: `menu.РУ` is
+  `.ру` in Rust and `.РУ` in loco. Accepted.
 - **Stderr wording.** An I/O error names Rig's `FileError`, not the
   system's message; SPEC fixes no wording.
 
