@@ -132,3 +132,15 @@ The table is the output of `loc --languages`. A file is recognized by extension,
 The expected documents are the authority: a disagreement is a bug in the program until an expected document is changed on purpose. To add a language: a row in the spec's language table, an entry in `src/lang.rs`, a fixture per rule, the fixture's counts predicted by hand before running the program, then the expected documents regenerated.
 
 Standard library only. Unix only: file names are handled as bytes.
+
+## The Rig version
+
+`rig/` holds a second implementation of loc in [Rig](https://github.com/shreeve/rig), built as `bin/loco`. It is held to the same `SPEC.md` and the same four expected documents, byte for byte, styled output included, and runs as fast as the Rust on large trees. The Rust code is unchanged; `rig/PLAN.md` describes the design.
+
+```
+rig/build.sh                     # bin/loco
+rig/test.sh                      # the conformance and cli checks, ported from tests/
+rig test rig/loc                 # the unit tests
+```
+
+`LOC=target/release/loc rig/test.sh` runs the same checks on the Rust loc.

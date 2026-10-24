@@ -1,0 +1,483 @@
+# The report and its two renderings, SPEC.md Output. The JSON is the
+# conformance format; the table is for people.
+
+use std.sort
+use std.text
+use std.utf8
+
+GAP = "    "
+MIN_WIDTH = 7
+BOLD = "\x1b[1m"
+DIM = "\x1b[2m"
+RESET = "\x1b[0m"
+RULE = "\u{2500}"
+DOT_GLYPH = "\u{25cf}"
+FULL_BLOCK = "\u{2588}"
+ELLIPSIS = "\u{2026}"
+WRAP = 40        # widest a --languages column grows before its items continue on the next line
+PATH_WIDTH = 40  # widest a --by-file path is shown before it loses leading directories
+SHOWN_LABELS = 10
+
+obj FileEntry
+  path: String     # as shown: a leading ./ dropped, made valid UTF-8
+  counts: Counts
+  bytes: Int
+
+obj LangRow
+  name: Static
+  files: Int
+  counts: Counts
+  bytes: Int
+  color: [3]U8
+  by_file: List[FileEntry] = List()
+
+obj SkippedLabel
+  label: String
+  files: Int
+  bytes: Int
+
+# Skipped files of one kind, text or binary: labels in report order and their sum.
+obj SkippedGroup
+  labels: List[SkippedLabel] = List()
+  files: Int = 0
+  bytes: Int = 0
+
+fun skipped_group(labels: ?Map[String, Skipped]) -> SkippedGroup
+  g = SkippedGroup()
+  for e in ?labels.items()
+    !g.labels.push(SkippedLabel(label: +e.key, files: e.value.files, bytes: e.value.bytes))
+    g.files += e.value.files
+    g.bytes += e.value.bytes
+  sort.sort_by(!g.labels, |a, b| a.bytes > b.bytes or (a.bytes == b.bytes and a.label < b.label))
+  g
+
+pub obj Report
+  languages: List[LangRow]
+  total: Counts
+  files: Int
+  bytes: Int
+  text: SkippedGroup
+  binary: SkippedGroup
+  by_file: Bool
+  only_lang: Bool  # the skipped section is left out when it would be empty
+
+  # The JSON as JSON.stringify writes it: one object, no whitespace, then a newline.
+  pub fun json(?@) -> String
+    out = String("{\"languages\":[")
+    for row, i in ?@languages
+      !out.push(0x2C) if i > 0
+      !out.add("{\"name\":")
+      json_str(!out, row.name)
+      !out.add(",\"files\":", row.files)
+      counts_json(!out, row.counts)
+      !out.add(",\"bytes\":", row.bytes)
+      if @by_file
+        !out.add(",\"by_file\":[")
+        for f, k in ?row.by_file
+          !out.push(0x2C) if k > 0
+          !out.add("{\"path\":")
+          json_str(!out, ?f.path)
+          counts_json(!out, f.counts)
+          !out.add(",\"bytes\":", f.bytes, "}")
+        !out.add("]")
+      !out.add("}")
+    !out.add("],\"total\":{\"files\":", @files)
+    counts_json(!out, @total)
+    !out.add(",\"bytes\":", @bytes, "},\"skipped\":{")
+    group_json(!out, "text", ?@text)
+    !out.push(0x2C)
+    group_json(!out, "binary", ?@binary)
+    !out.add("}}\n")
+    out
+
+  # The language bar: one run of FULL BLOCK glyphs per language with code,
+  # foreground and background both the language's color, touching, each at
+  # least one cell, the rest by code share with floor and largest
+  # remainder, ties in table order. The glyphs keep the bar visible under
+  # a selection that repaints cell backgrounds; the background fills the
+  # gaps a terminal leaves when it draws the glyph from a font that does
+  # not cover the whole cell.
+  called fun bar(?@, width: Int) -> String
+    rows: List[Int] = List()
+    for l, i in ?@languages
+      !rows.push(i) if l.counts.code > 0
+    out = String()
+    return out if rows.len == 0 or width < rows.len
+    spare = width - rows.len
+    total = @total.code
+    cells: List[Int] = List()
+    rems: List[Int] = List()
+    for i in rows
+      code = @languages[i].counts.code
+      !cells.push(1 + code * spare / total)
+      !rems.push(code * spare % total)
+    left = width - cells.sum()
+    order: List[Int] = List()
+    for k in 0..rows.len
+      !order.push(k)
+    sort.sort_by(!order, |?rems, a, b| rems[a] > rems[b])
+    for k in ?order[..left]
+      cells[k] += 1
+    for i, k in rows
+      c = @languages[i].color
+      !out.add(fg(c), bg(c))
+      for 0..cells[k]
+        !out.add(FULL_BLOCK)
+      !out.add(RESET)
+    out
+
+  pub fun table(?@, styled: Bool) -> String
+    prefix = "  " if styled else ""  # room for the dot on language rows
+    # The body's rows, then the total row, which the grid sizes with them.
+    # A language row carries its color for the dot; a file row under it has none.
+    rows: List[List[String]] = List()
+    colors: List[([3]U8)?] = List()
+    for l in ?@languages
+      !rows.push(count_cells(String(prefix, l.name), l.files, l.counts, @total.code))
+      !colors.push(l.color)
+      for f in ?l.by_file
+        cells = count_cells(String(prefix, shorten(?f.path)), 0, f.counts, @total.code)
+        cells[1] = String()
+        !rows.push(<cells)
+        !colors.push(none)
+    !rows.push(count_cells(String(prefix, "Total"), @files, @total, @total.code))
+    body = rows.len - 1
+    g = grid(header_cells(prefix, ["Language", "Files", "Lines", "Blank", "Comment", "Code", "%"]), ?rows, false)
+
+    out = String()
+    if styled and @total.code > 0
+      !out.add(@bar(g.width()), "\n")
+    put_line(!out, styled, DIM, g.rule())
+    put_line(!out, styled, BOLD, g.line(?g.headers))
+    put_line(!out, styled, DIM, g.rule())
+    # With --by-file every language is a framed section: a rule above its
+    # row, except the first, whose rule is the header's, and a rule below
+    # it before its files.
+    for cells, i in ?rows[..body]
+      text_line = g.line(?cells)
+      if colors[i] as c
+        if @by_file and i > 0
+          put_line(!out, styled, DIM, g.rule())
+        if styled
+          !out.add(fg(c), DOT_GLYPH, RESET, " ", ?text_line[2..], "\n")
+        else
+          !out.add(text_line, "\n")
+        if @by_file
+          put_line(!out, styled, DIM, g.rule())
+      else
+        !out.add(text_line, "\n")
+    put_line(!out, styled, DIM, g.rule())
+    put_line(!out, styled, BOLD, g.line(?rows[body]))
+    put_line(!out, styled, DIM, g.rule())
+    return out if @only_lang and @text.files == 0 and @binary.files == 0
+    !out.add("\n")
+
+    all_files = @files + @text.files
+    all_bytes = @bytes + @text.bytes
+    put_line(!out, styled, DIM, String(
+      with_commas(@text.files), " of ", with_commas(all_files), " files skipped, ",
+      size(@text.bytes), " of ", size(all_bytes), " of text (", share(@text.bytes, all_bytes), "%)",
+    ))
+    labels = ?@text.labels
+    if labels.len > 0
+      shown = labels.len if labels.len < SHOWN_LABELS else SHOWN_LABELS
+      rows: List[List[String]] = List()
+      for s in ?labels[..shown]
+        !rows.push(skipped_row(+s.label, s.files, s.bytes, all_bytes))
+      if labels.len > SHOWN_LABELS
+        rest_files = 0
+        rest_bytes = 0
+        for s in ?labels[SHOWN_LABELS..]
+          rest_files += s.files
+          rest_bytes += s.bytes
+        !rows.push(skipped_row(String(with_commas(labels.len - SHOWN_LABELS), " more labels"), rest_files, rest_bytes, all_bytes))
+      sg = grid(header_cells("", ["Skipped", "Files", "Size", "%"]), ?rows, false)
+      put_line(!out, styled, DIM, sg.rule())
+      put_line(!out, styled, DIM, sg.line(?sg.headers))
+      put_line(!out, styled, DIM, sg.rule())
+      for cells in ?rows
+        put_line(!out, styled, DIM, sg.line(?cells))
+      put_line(!out, styled, DIM, sg.rule())
+    if @binary.files > 0
+      blabels = ?@binary.labels
+      b = String(with_commas(@binary.files), " binary file", "" if @binary.files == 1 else "s", ", ", size(@binary.bytes), ": ")
+      shown = blabels.len if blabels.len < SHOWN_LABELS else SHOWN_LABELS
+      for s, k in ?blabels[..shown]
+        !b.add(", ") if k > 0
+        !b.add(s.label, " ", with_commas(s.files))
+      if blabels.len > SHOWN_LABELS
+        !b.add(", ", with_commas(blabels.len - SHOWN_LABELS), " more")
+      put_line(!out, styled, DIM, <b)
+    out
+
+# Orders the sums as the spec requires: languages by code descending then
+# name, files within a language by code descending then path, labels by
+# size descending then label, all byte-wise.
+pub fun report(table: ?Table, sums: Sums, only_lang: Bool) -> Report
+  rows: List[LangRow] = List()
+  row_of = List.filled(table.langs.len, -1)
+  total = Counts()
+  files = 0
+  bytes = 0
+  for l, i in ?table.langs
+    continue if sums.files[i] == 0
+    row_of[i] = rows.len
+    !rows.push(LangRow(name: l.name, files: sums.files[i], counts: sums.langs[i], bytes: sums.bytes[i], color: l.color))
+    !total.add(sums.langs[i])
+    files += sums.files[i]
+    bytes += sums.bytes[i]
+  by_file = sums.by_file != none
+  if ?sums.by_file as found
+    for r in found
+      !rows[row_of[r.lang]].by_file.push(FileEntry(path: shown_path(?r.path), counts: r.counts, bytes: r.bytes))
+  for row in !rows
+    sort.sort_by(!row.by_file, |a, b| a.counts.code > b.counts.code or (a.counts.code == b.counts.code and a.path < b.path))
+  sort.sort_by(!rows, |a, b| a.counts.code > b.counts.code or (a.counts.code == b.counts.code and a.name < b.name))
+  Report(
+    languages: <rows,
+    total: total,
+    files: files,
+    bytes: bytes,
+    text: skipped_group(?sums.text),
+    binary: skipped_group(?sums.binary),
+    by_file: by_file,
+    only_lang: only_lang,
+  )
+
+# The --languages table: every language a file can be recognized as, by
+# name, with the extensions and file names it claims, in the language
+# table's layout. A cell's items wrap onto continuation lines so no column
+# exceeds WRAP characters.
+pub fun language_list(table: ?Table, styled: Bool) -> String
+  prefix = "  " if styled else ""
+  order: List[Int] = List()
+  for l, i in ?table.langs
+    !order.push(i) if l.listed()
+  sort.sort_by(!order, |?table, a, b| table.langs[a].name < table.langs[b].name)
+  # Each language becomes one or more physical rows; only the first carries the name.
+  rows: List[List[String]] = List()
+  firsts: List[Int] = List()   # the language of each first row, or -1
+  for i in order
+    l = ?table.langs[i]
+    items: List[Static] = List()
+    for e in l.extensions
+      !items.push(e)
+    if ?l.claim as c
+      for e in c.extensions
+        !items.push(e)
+    for n in l.names
+      !items.push(n)
+    lines = wrap(?items)
+    for cell, k in <lines
+      first = String(prefix, l.name) if k == 0 else String()
+      cells: List[String] = List()
+      !cells.push(<first)
+      !cells.push(<cell)
+      !rows.push(<cells)
+      !firsts.push(i if k == 0 else -1)
+  g = grid(header_cells(prefix, ["Language", "Files"]), ?rows, true)
+  out = String()
+  put_line(!out, styled, DIM, g.rule())
+  put_line(!out, styled, BOLD, String(text.trim_end(g.line(?g.headers))))
+  put_line(!out, styled, DIM, g.rule())
+  for cells, k in ?rows
+    t = g.line(?cells)
+    shown = text.trim_end(?t)
+    if firsts[k] >= 0 and styled
+      !out.add(fg(table.langs[firsts[k]].color), DOT_GLYPH, RESET, " ", shown[2..], "\n")
+    else
+      !out.add(shown, "\n")
+  out
+
+# Joins items with single spaces into lines no longer than WRAP, breaking only between items.
+fun wrap(items: ?List[Static]) -> List[String]
+  lines: List[String] = List()
+  for item in items
+    n = lines.len
+    if n > 0 and lines[n - 1].len + 1 + item.len <= WRAP
+      !lines[n - 1].add(" ", item)
+    else
+      !lines.push(String(item))
+  lines
+
+# A path shown in the table loses whole leading directories, replaced by
+# …/, until it is within PATH_WIDTH characters or only the file name is
+# left. The file name is never cut, so a name over the cap is the one thing
+# that can widen the column.
+fun shorten(path: ?String) -> String
+  return String(path) if utf8.rune_count(path) <= PATH_WIDTH
+  rest = path
+  cut = false
+  while text.find(rest, "/") as slash
+    rest = rest[slash + 1..]
+    cut = true
+    break if 2 + utf8.rune_count(rest) <= PATH_WIDTH
+  return String(path) if not cut  # a bare name over the cap
+  String(ELLIPSIS, "/", rest)
+
+# A path as the report shows it: a PATH of . says nothing about where the
+# file is, so a leading ./ is dropped; then any bytes that are not UTF-8
+# become U+FFFD.
+fun shown_path(path: ?String) -> String
+  lossy(text.strip_prefix(path, "./") ?? path)
+
+# `bytes` as valid UTF-8, each maximal ill-formed subpart one U+FFFD, as
+# Rust's String::from_utf8_lossy writes it.
+pub fun lossy(bytes: ?String) -> String
+  out = String()
+  !out.reserve(bytes.len)
+  d = utf8.Decoder.new()
+  i = 0
+  while i < bytes.len
+    if (!d).next(bytes[i]) as r
+      utf8.push_rune(!out, r)
+      continue if d.retry
+    i += 1
+  if d.pending()
+    utf8.push_rune(!out, utf8.REPLACEMENT)
+  out
+
+# JSON.stringify's string escaping: quote, backslash, and control bytes;
+# everything else as is.
+sub json_str(out: !String, s: ?String)
+  !out.push(DOUBLE_QUOTE)
+  for b in s
+    match b
+      DOUBLE_QUOTE => !out.add("\\\"")
+      BACKSLASH => !out.add("\\\\")
+      LINE_FEED => !out.add("\\n")
+      CR => !out.add("\\r")
+      TAB => !out.add("\\t")
+      0x08 => !out.add("\\b")
+      FORM_FEED => !out.add("\\f")
+      c if c < SPACE => !out.add("\\u00", HEX[Int(c) >> 4], HEX[Int(c) & 15])
+      _ => !out.push(b)
+  !out.push(DOUBLE_QUOTE)
+
+HEX = "0123456789abcdef"
+
+sub counts_json(out: !String, c: Counts)
+  !out.add(",\"lines\":", c.lines, ",\"blank\":", c.blank, ",\"comment\":", c.comment, ",\"code\":", c.code)
+
+sub group_json(out: !String, key: Static, g: ?SkippedGroup)
+  !out.add("\"", key, "\":{\"files\":", g.files, ",\"bytes\":", g.bytes, ",\"labels\":[")
+  for s, i in ?g.labels
+    !out.push(0x2C) if i > 0
+    !out.add("{\"label\":")
+    json_str(!out, ?s.label)
+    !out.add(",\"files\":", s.files, ",\"bytes\":", s.bytes, "}")
+  !out.add("]}")
+
+called fun count_cells(name: String, files: Int, c: Counts, whole: Int) -> List[String]
+  cells: List[String] = List()
+  !cells.push(<name)
+  !cells.push(with_commas(files))
+  !cells.push(with_commas(c.lines))
+  !cells.push(with_commas(c.blank))
+  !cells.push(with_commas(c.comment))
+  !cells.push(with_commas(c.code))
+  !cells.push(share(c.code, whole))
+  cells
+
+called fun skipped_row(label: String, files: Int, bytes: Int, whole: Int) -> List[String]
+  cells: List[String] = List()
+  !cells.push(<label)
+  !cells.push(with_commas(files))
+  !cells.push(size(bytes))
+  !cells.push(share(bytes, whole))
+  cells
+
+# The headers of a grid, the first after the prefix that makes room for a dot.
+fun header_cells(prefix: Static, names: []Static) -> List[String]
+  out: List[String] = List()
+  for name, i in names
+    !out.push(String(prefix if i == 0 else "", name))
+  out
+
+# One line of a table, styled or plain, then its newline.
+sub put_line(out: !String, styled: Bool, code: Static, s: String)
+  if styled
+    !out.add(code, s, RESET, "\n")
+  else
+    !out.add(s, "\n")
+
+# Bytes to one decimal in the smallest unit from KB up that keeps the
+# tenths below 10,000, or TB; under 1000 bytes whole.
+fun size(bytes: Int) -> String
+  return String(bytes, " B") if bytes < 1000
+  b = U128(bytes)  # bytes × 10 must not overflow
+  for name, i in UNIT_NAMES
+    unit = U128(UNITS[i])
+    tenths = (b * 10 + unit / 2) / unit
+    if tenths < 10_000 or i == UNITS.len - 1
+      return String(tenths / 10, ".", tenths % 10, " ", name)
+  String()
+
+UNITS = [1_000, 1_000_000, 1_000_000_000, 1_000_000_000_000]
+UNIT_NAMES = ["KB", "MB", "GB", "TB"]
+
+fun with_commas(n: Int) -> String
+  digits = String(n)
+  out = String()
+  for c, i in ?digits
+    !out.push(0x2C) if i > 0 and (digits.len - i) % 3 == 0
+    !out.push(c)
+  out
+
+# part/whole to one decimal in integer arithmetic, so every implementation rounds alike.
+fun share(part: Int, whole: Int) -> String
+  return String("0.0") if whole == 0
+  tenths = (part * 1000 + whole / 2) / whole
+  String(tenths / 10, ".", tenths % 10)
+
+fun fg(c: [3]U8) -> String
+  String("\x1b[38;2;", c[0], ";", c[1], ";", c[2], "m")
+
+fun bg(c: [3]U8) -> String
+  String("\x1b[48;2;", c[0], ";", c[1], ";", c[2], "m")
+
+# A grid lays out rows under a header: first column left-aligned, the rest
+# right-aligned (or all left-aligned) and at least MIN_WIDTH wide,
+# four-space gutters, a rule as wide as the header. Widths are in
+# characters.
+obj Grid
+  headers: List[String]
+  widths: List[Int]
+  left: Bool  # every column left-aligned
+
+  fun line(?@, cells: ?List[String]) -> String
+    out = String()
+    for cell, col in cells
+      !out.add(GAP) if col > 0
+      gap = @widths[col] - utf8.rune_count(cell)
+      if col == 0 or @left
+        !out.add(cell)
+        pad(!out, gap)
+      else
+        pad(!out, gap)
+        !out.add(cell)
+    out
+
+  fun width(?@) -> Int
+    utf8.rune_count(@line(?@headers))
+
+  fun rule(?@) -> String
+    out = String()
+    for 0..@width()
+      !out.add(RULE)
+    out
+
+fun grid(headers: List[String], rows: ?List[List[String]], left: Bool) -> Grid
+  widths: List[Int] = List()
+  for h, col in ?headers
+    w = utf8.rune_count(h)
+    w = MIN_WIDTH if col > 0 and w < MIN_WIDTH
+    for cells in rows
+      n = utf8.rune_count(cells[col])
+      w = n if n > w
+    !widths.push(w)
+  Grid(headers: <headers, widths: <widths, left: left)
+
+sub pad(out: !String, n: Int)
+  for 0..n
+    !out.push(SPACE)

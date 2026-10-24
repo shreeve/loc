@@ -1,0 +1,159 @@
+# The command line, SPEC.md Command line: what to do, or the usage error
+# that stops it.
+
+use std.text
+
+pub USAGE = "Usage: loc [OPTIONS] [PATH...]"
+
+HELP = [
+  "loc counts lines of code per language across a directory tree.",
+  "",
+  USAGE,
+  "",
+  "Arguments:",
+  "  [PATH...]                Files or directories to count (default: the current directory)",
+  "",
+  "Options:",
+  "  -e, --exclude PATTERN    Skip what this .gitignore line would, under every PATH; repeatable",
+  "  -o, --only PATTERN       Count only what this .gitignore line would skip, under every PATH; repeatable",
+  "  -x, --exclude-lang NAME  Skip every file of a language, named as --languages prints it; repeatable",
+  "  -l, --only-lang NAME     Count only the files of a language, named as --languages prints it; repeatable",
+  "      --no-ignore          Count files that .gitignore files exclude",
+  "  -f, --by-file            Add a row per file under its language",
+  "      --json               Print the report as JSON",
+  "      --no-color           Plain output even on a terminal",
+  "      --jobs N             Threads that read and count files (default: all cores)",
+  "      --languages          List the languages and the files each one claims",
+  "  -h, --help               Show this help",
+  "",
+  "Examples:",
+  "  loc                      Count the current directory",
+  "  loc src tests            Count several paths; a file reached twice counts once",
+  "  loc -e '*.min.js' .      Skip what that .gitignore line would",
+  "  loc -o '*_test.go' .     Count only what that .gitignore line would skip",
+  "  loc -x c -x c++ .        Skip whole languages",
+  "  loc -l rust .            Count one language",
+  "  loc --json . | jq .total.code",
+]
+
+pub fun help() -> String
+  out = String()
+  for line_text in HELP
+    !out.add(line_text, "\n")
+  out
+
+pub enum Command
+  run(opts: Options)
+  help
+  languages(no_color: Bool)
+
+pub error Usage
+  unknown_flag(flag: String)
+  needs_pattern(flag: Static)
+  needs_language(flag: Static)
+  unknown_language(name: String)
+  bad_jobs
+  both_lang_flags
+
+# What a usage error says, before the usage line.
+pub fun describe(e: ?Usage) -> String
+  match e
+    .unknown_flag(flag) => String("loc: unknown flag ", flag)
+    .needs_pattern(flag) => String("loc: ", flag, " needs a pattern")
+    .needs_language(flag) => String("loc: ", flag, " needs a language from --languages")
+    .unknown_language(name) => String("loc: unknown language ", name)
+    .bad_jobs => String("loc: --jobs needs a positive integer")
+    .both_lang_flags => String("loc: --only-lang and --exclude-lang cannot be combined")
+
+pub obj Options
+  pub ?json: Bool = false
+  pub ?no_color: Bool = false
+  pub ?no_ignore: Bool = false
+  pub ?by_file: Bool = false
+  excludes: List[String] = List()
+  only: List[String] = List()
+  excluded_langs: List[Bool]   # by index into the table
+  only_langs: List[Bool]
+  jobs: Int? = none            # none: a worker per core
+  pub ?roots: List[String] = List()
+
+  # Whether --only-lang names a language, so the skipped section shows only their misses.
+  pub fun only_lang(?@) -> Bool
+    for named in @only_langs
+      return true if named
+    false
+
+# -h or --help anywhere before -- wins, before any other flag is judged;
+# then --languages anywhere before --; then one pass over the arguments, in
+# order, the first error winning. A flag's value is in the same argument
+# after = or in the next one, which it takes even when it starts with -.
+pub fun parse(args: []Static, table: ?Table) -> Command!Usage
+  listing = false
+  plain = false
+  for a in args
+    break if a == "--"
+    return Command.help if a == "-h" or a == "--help"
+    listing = true if a == "--languages"
+    plain = true if a == "--no-color"
+  return Command.languages(no_color: plain) if listing
+
+  opts = Options(excluded_langs: List.filled(table.count(), false), only_langs: List.filled(table.count(), false))
+  flags = true  # until --
+  i = 0
+  while i < args.len : i += 1
+    arg = args[i]
+    if not flags or not text.starts_with(arg, "-")
+      !opts.roots.push(String(arg))
+    else if arg == "--"
+      flags = false
+    else if arg == "--json"
+      opts.json = true
+    else if arg == "--no-color"
+      opts.no_color = true
+    else if arg == "--no-ignore"
+      opts.no_ignore = true
+    else if arg == "--by-file" or arg == "-f"
+      opts.by_file = true
+    else if arg == "--exclude" or arg == "-e" or text.starts_with(arg, "--exclude=")
+      pattern = value(args, !i, "--exclude") ?? ""
+      return Usage.needs_pattern(flag: "--exclude") if pattern.len == 0
+      !opts.excludes.push(String(pattern))
+    else if arg == "--only" or arg == "-o" or text.starts_with(arg, "--only=")
+      pattern = value(args, !i, "--only") ?? ""
+      return Usage.needs_pattern(flag: "--only") if pattern.len == 0
+      !opts.only.push(String(pattern))
+    else if arg == "--exclude-lang" or arg == "-x" or text.starts_with(arg, "--exclude-lang=")
+      li = language(table, "--exclude-lang", value(args, !i, "--exclude-lang"))!
+      opts.excluded_langs[li] = true
+    else if arg == "--only-lang" or arg == "-l" or text.starts_with(arg, "--only-lang=")
+      li = language(table, "--only-lang", value(args, !i, "--only-lang"))!
+      opts.only_langs[li] = true
+    else if arg == "--jobs" or text.starts_with(arg, "--jobs=")
+      digits = value(args, !i, "--jobs") ?? ""
+      n = text.parse_int(digits) catch return Usage.bad_jobs
+      return Usage.bad_jobs if n < 1 or text.starts_with(digits, "+")
+      opts.jobs = n
+    else
+      return Usage.unknown_flag(flag: lossy(arg))
+  return Usage.both_lang_flags if opts.only_lang() and any(?opts.excluded_langs)
+  !opts.roots.push(String(".")) if opts.roots.len == 0
+  Command.run(opts: <opts)
+
+# The value of a flag that takes one: after = in the same argument, or the next argument.
+fun value(args: []Static, i: !Int, flag: Static) -> Static?
+  arg = args[i]
+  if arg.len > flag.len and text.starts_with(arg, flag) and arg[flag.len] == EQUALS
+    return arg[flag.len + 1..]
+  i += 1
+  args.get(i)
+
+# The language a flag's value names, as --languages prints it.
+fun language(table: ?Table, flag: Static, name: Static?) -> Int!Usage
+  given = name ?? ""
+  return Usage.needs_language(flag: flag) if given.len == 0
+  table.by_language(given) ?? return Usage.unknown_language(name: lossy(given))
+
+fun any(flags: ?List[Bool]) -> Bool
+  for set in flags
+    return true if set
+  false

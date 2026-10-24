@@ -1,0 +1,86 @@
+# Unit tests: the Rust loc's three, and the rules the fixtures cannot
+# reach. Run from the repository's root: `rig test rig/loc`.
+
+use std.file
+use std.os
+use std.text
+
+# The README's language count is the number of table entries a file can be
+# recognized as; entries that exist only as region rules do not count.
+test "the README's language count matches the table"
+  readme = file.read("README.md")! ?? String()
+  t = languages()
+  recognizable = 0
+  for l in t.langs
+    recognizable += 1 if l.listed()
+  text.contains(?readme, String("in ", recognizable, " languages."))
+
+# Each segment is a run of FULL BLOCK glyphs with foreground and background
+# both the language's color.
+test "the bar is full blocks on their own color"
+  rows: List[LangRow] = List()
+  !rows.push(LangRow(name: "A", files: 1, counts: Counts(lines: 3, code: 3), bytes: 3, color: [1, 2, 3]))
+  !rows.push(LangRow(name: "B", files: 1, counts: Counts(lines: 1, code: 1), bytes: 1, color: [4, 5, 6]))
+  r = Report(
+    languages: <rows,
+    total: Counts(code: 4),
+    files: 2,
+    bytes: 4,
+    text: SkippedGroup(),
+    binary: SkippedGroup(),
+    by_file: false,
+    only_lang: false,
+  )
+  want = String("\x1b[38;2;1;2;3m\x1b[48;2;1;2;3m", "████", RESET, "\x1b[38;2;4;5;6m\x1b[48;2;4;5;6m", "██", RESET)
+  r.bar(6) == want
+
+# The size rule from SPEC.md at its unit boundaries and rounding edges.
+test "sizes follow the spec rule"
+  bytes = [0, 1, 999, 1000, 1049, 1050, 9999, 999949, 999950, 1000000, 1234567, 999950000, 1000000000, 1000000000000, 1230000000000000, Int.max]
+  shown = ["0 B", "1 B", "999 B", "1.0 KB", "1.0 KB", "1.1 KB", "10.0 KB", "999.9 KB", "1.0 MB", "1.0 MB", "1.2 MB", "1.0 GB", "1.0 GB", "1.0 TB", "1230.0 TB", "9223372.0 TB"]
+  for b, i in bytes
+    return false if size(b) != shown[i]
+  true
+
+# A file reached through several roots counts once: its key is its resolved
+# root and the path below it, however the root is spelled.
+test "dedup keys agree however a root is spelled"
+  s = Sender(jobs: *Chan[Job](1), resolved: String("/abs/src"))
+  s.root = String("src")
+  return false if s.key("src") != "/abs/src"
+  return false if s.key("src/main.rs") != "/abs/src/main.rs"
+  s.root = String("src/")
+  return false if s.key("src/main.rs") != "/abs/src/main.rs"
+  s.root = String("./src")
+  return false if s.key("./src/lib/b.rs") != "/abs/src/lib/b.rs"
+  s.root = String("src/main.rs")
+  s.resolved = String("/abs/src/main.rs")
+  s.key("src/main.rs") == "/abs/src/main.rs"
+
+# A root is made absolute and cleaned lexically, so its relative path never
+# has an empty component and anchored rules apply alike.
+test "roots are cleaned as Rust cleans them"
+  cwd = os.cwd()!
+  for spelled in ["sub", "sub/", "sub//", "./sub/", "sub/.", "sub/../sub/"]
+    return false if absolute(spelled) != String(cwd, "/sub")
+  return false if absolute("/abs//sub/") != "/abs/sub"
+  return false if absolute("/..") != "/"
+  absolute("/") == "/"
+
+# Each maximal ill-formed subpart of UTF-8 becomes one U+FFFD, as Rust's
+# String::from_utf8_lossy writes it.
+test "lossy UTF-8 matches Rust's"
+  return false if lossy("a\xffb") != "a\u{fffd}b"
+  return false if lossy("\xe2\x82") != "\u{fffd}"
+  return false if lossy("\xe2\x82x") != "\u{fffd}x"
+  return false if lossy("\xed\xa0\x80") != "\u{fffd}\u{fffd}\u{fffd}"
+  return false if lossy("\xf0\x9f\x98\x80") != "\u{1f600}"
+  lossy("caf\xc3\xa9") == "caf\u{e9}"
+
+# The interpreter of a #! line: the last component of the first word, or
+# the first word after env that is not an option.
+test "shebangs name their interpreter"
+  return false if (shebang("#!/usr/bin/env -S python3 -u\n") ?? "") != "python3"
+  return false if (shebang("#!/bin/sh\necho") ?? "") != "sh"
+  return false if shebang("#!\n") != none
+  shebang("no") == none

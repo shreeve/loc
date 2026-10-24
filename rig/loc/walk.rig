@@ -1,0 +1,446 @@
+# The walk and the pipeline. A walker task sends each path to count through
+# a channel as it finds them; counting tasks take them as they come and sum
+# what they count; the sums merge at the end. Walk order and task count
+# never affect output: every number is a sum.
+
+use std.file
+use std.task
+use std.text
+
+NUL_WINDOW = 8192     # a file is binary if a NUL byte appears this early
+SMALL = 65536         # a file this size or less is read whole to look at its head
+READ_CAP = 6          # files in their file calls at once
+COUNTERS = 64         # counting tasks without --jobs: twice the most workers the scheduler runs
+
+obj Skipped
+  files: Int = 0
+  bytes: Int = 0
+
+obj FileRow
+  lang: Int
+  path: String
+  counts: Counts
+  bytes: Int
+
+# Sums kept by one counter: per-language totals by language index, and
+# skipped files by label, text and binary apart. `by_file` holds every
+# counted file's own counts when --by-file asks for them.
+obj Sums
+  langs: List[Counts]
+  files: List[Int]
+  bytes: List[Int]
+  text: Map[String, Skipped] = Map()
+  binary: Map[String, Skipped] = Map()
+  by_file: List[FileRow]? = none
+
+  sub take(!@, table: ?Table, loaded: Loaded, path: String)
+    match <loaded
+      .counted(lang, buf)
+        c = scan(table, lang, ?buf)
+        !@langs[lang].add(c)
+        @files[lang] += 1
+        @bytes[lang] += buf.len
+        if !@by_file as rows
+          !rows.push(FileRow(lang: lang, path: <path, counts: c, bytes: buf.len))
+      .text(label, n) => tally(!@text, <label, 1, n)
+      .binary(label, n) => tally(!@binary, <label, 1, n)
+      .unreadable(n) => tally(!@text, String("unreadable"), 1, n)
+      .dropped => pass
+
+  sub add(!@, other: Sums)
+    o = <other
+    for i in 0..@langs.len
+      !@langs[i].add(o.langs[i])
+      @files[i] += o.files[i]
+      @bytes[i] += o.bytes[i]
+    for e in ?o.text.items()
+      tally(!@text, +e.key, e.value.files, e.value.bytes)
+    for e in ?o.binary.items()
+      tally(!@binary, +e.key, e.value.files, e.value.bytes)
+    if <o.by_file as theirs and !@by_file as mine
+      for r in <theirs
+        !mine.push(<r)
+
+fun empty_sums(langs: Int, by_file: Bool) -> Sums
+  counts: List[Counts] = List()
+  for 0..langs
+    !counts.push(Counts())
+  Sums(
+    langs: <counts,
+    files: List.filled(langs, 0),
+    bytes: List.filled(langs, 0),
+    by_file: List[FileRow]() if by_file else none,
+  )
+
+sub tally(labels: !Map[String, Skipped], label: String, files: Int, bytes: Int)
+  if (!labels).edit(?label) as s
+    s.files += files
+    s.bytes += bytes
+  else
+    !labels.put(<label, Skipped(files: files, bytes: bytes))
+
+# The languages that count, by index into the table. With --only-lang a
+# file of no language drops out too, so an extensionless file is read for
+# its #! line only when a counted language lists interpreters.
+obj LangFilter
+  excluded: List[Bool]
+  only: Bool
+  shebangs: Bool
+
+fun lang_filter(table: ?Table, opts: ?Options) -> LangFilter
+  return LangFilter(excluded: +opts.excluded_langs, only: false, shebangs: true) if not opts.only_lang()
+  excluded: List[Bool] = List()
+  shebangs = false
+  for named, i in opts.only_langs
+    !excluded.push(not named)
+    shebangs = true if named and table.langs[i].shebangs.len > 0
+  LangFilter(excluded: <excluded, only: true, shebangs: shebangs)
+
+# A file to count, as the walker sends it: one a walk found, or a PATH that
+# is one; or a PATH that is no regular file, a device or a FIFO, which is
+# read only up to the size it reports, as Rust's `take(size)` reads it.
+enum Job
+  file(path: String)
+  device(path: String)
+
+fun job_parts(job: Job) -> (String, Bool)
+  match <job
+    .file(path) => return path, false
+    .device(path) => return path, true
+
+# Counts every file under every root, the walk overlapping the counting.
+pub fun count_trees(table: ?Table, opts: ?Options) -> Sums!
+  counters = COUNTERS
+  if opts.jobs as n
+    _ = task.workers(n)  # before the first task, which starts the workers
+    counters = 2 * n     # so one file's reads overlap another's scan
+  filter = lang_filter(table, opts)
+  jobs = *Chan[Job](1024)
+  turns = *Chan[Int](READ_CAP)
+  for k in 0..READ_CAP
+    !turns.send(k)!
+  w = walk_roots(opts, +jobs)&
+  ts = Tasks[Sums!]()
+  for 0..counters
+    !ts.add(counter(table, ?filter, +jobs, +turns, opts.by_file)&)
+  done = (>ts)!
+  >w!
+  total = empty_sums(table.langs.len, opts.by_file)
+  for s in <done
+    !total.add(<s)
+  total
+
+# Counts each file the walker sends, taking a turn for its file calls and
+# giving it back before it scans, so at most READ_CAP files read at once
+# while every counter scans.
+fun counter(table: ?Table, filter: ?LangFilter, jobs: *Chan[Job], turns: *Chan[Int], by_file: Bool) -> Sums!
+  s = empty_sums(table.langs.len, by_file)
+  while (!jobs).recv()! as job
+    path, device = job_parts(<job)
+    turn = (!turns).recv()! ?? 0
+    loaded = load(table, filter, ?path, device)
+    !turns.send(turn)!
+    !s.take(table, <loaded, <path)
+  s
+
+# What one file contributes, read but not yet scanned.
+enum Loaded
+  counted(lang: Int, buf: String)
+  text(label: String, bytes: Int)
+  binary(label: String, bytes: Int)
+  unreadable(bytes: Int)
+  dropped  # an excluded language, or a file --only-lang does not name
+
+# Recognizes a file and reads what its recognition needs, SPEC.md Files.
+fun load(table: ?Table, filter: ?LangFilter, path: ?String, device: Bool) -> Loaded
+  name = base_name(path)
+  ext = extension(name)
+  lower = ascii_lower(ext ?? "")
+  li: Int? = none
+  li = table.by_extension(?lower) if ext != none
+  li = table.by_file_name(name) if li == none
+  ready: String? = none  # the whole file, when its head was read whole
+  if li == none and filter.only
+    # No name claims the file, so it drops out unless its #! line may yet name a counted language.
+    return .dropped if ext != none or not filter.shebangs
+    head = read_head(path, device) catch |e| return unreadable(path, ?e)
+    return .dropped if has_nul(?head.bytes)
+    li = interpreter_lang(table, ?head.bytes)
+    return .dropped if li == none
+    ready = take_whole(!head)
+  if li == none and ext != none and table.binary_exts.has(?lower)
+    return .binary(label: lossy(?lower), bytes: size_on_disk(path))
+  if li == none and ext != none and table.text_exts.has(?lower)
+    return .text(label: lossy(?lower), bytes: size_on_disk(path))
+  if li == none
+    # Unrecognized so far: the head decides between binary, a shebang
+    # naming a language (extensionless files only), and skipped text.
+    head = read_head(path, device) catch |e| return unreadable(path, ?e)
+    return .binary(label: label_of(name, ext, ?lower), bytes: head.size) if has_nul(?head.bytes)
+    li = interpreter_lang(table, ?head.bytes) if ext == none
+    return .text(label: label_of(name, ext, ?lower), bytes: head.size) if li == none
+    ready = take_whole(!head)
+  lang = li ?? return .dropped
+  excluded = ?filter.excluded
+  claimant = table.claimant(?lower) if ext != none else none
+  decided = false  # whether the claimant's test has run
+  if claimant as ci and excluded[lang] != excluded[ci]
+    # Exactly one of the two is excluded, so the head decides whether the rest is read.
+    if ready == none
+      head = read_head(path, device) catch |e| return unreadable(path, ?e)
+      lang = ci if claims(table, ci, ?head.bytes)
+      ready = take_whole(!head)
+    else if ?ready as whole
+      lang = ci if claims(table, ci, whole)
+    return .dropped if excluded[lang]
+    decided = true
+  else if excluded[lang]
+    return .dropped  # with a claimant, both are excluded
+  buf = <ready ?? (read_whole(path, device) catch |e| return unreadable(path, ?e))
+  if not decided and claimant as ci and claims(table, ci, ?buf)
+    lang = ci
+  return .binary(label: label_of(name, ext, ?lower), bytes: buf.len) if has_nul(?buf)
+  .counted(lang: lang, buf: <buf)
+
+MISSING = "no such file or directory"
+
+fun unreadable(path: ?String, e: ?error) -> Loaded
+  warn(String("loc: cannot read ", path, ": ", reason(e)))
+  .unreadable(bytes: size_on_disk(path))
+
+# The first NUL_WINDOW bytes of a file, or all of it, and its size.
+obj Head
+  bytes: String
+  size: Int
+  whole: Bool  # `bytes` holds the whole file
+
+# The head: a small regular file is read whole in one call; any other is
+# opened and read up to NUL_WINDOW bytes. A file gone since the walk found
+# it fails as `not_found`.
+fun read_head(path: ?String, device: Bool) -> Head!
+  info = file.stat(path)! ?? return file.FileError.not_found
+  if not device and info.size <= SMALL
+    got = file.read(path)!
+    buf = <got ?? return file.FileError.not_found
+    return Head(bytes: <buf, size: info.size, whole: true)
+  f = file.open(path)! ?? return file.FileError.not_found
+  buf = String()
+  while buf.len < NUL_WINDOW
+    want = NUL_WINDOW - buf.len
+    break if (!f).read(!buf, want)! == 0
+  Head(bytes: <buf, size: info.size, whole: false)
+
+# The head's bytes when they are the whole file, so the file is not read twice.
+fun take_whole(head: !Head) -> String?
+  return none if not head.whole
+  swap(!head.bytes, String())
+
+# The whole file; a device only up to the size it reports.
+fun read_whole(path: ?String, device: Bool) -> String!
+  if not device
+    got = file.read(path)!
+    return <got ?? return file.FileError.not_found
+  info = file.stat(path)! ?? return file.FileError.not_found
+  f = file.open(path)! ?? return file.FileError.not_found
+  buf = String()
+  while buf.len < info.size
+    want = info.size - buf.len
+    want = NUL_WINDOW if want > NUL_WINDOW
+    break if (!f).read(!buf, want)! == 0
+  buf
+
+# The size of a file without opening it; 0 when even that fails.
+fun size_on_disk(path: ?String) -> Int
+  info = (file.stat(path) catch none) ?? return 0
+  info.size
+
+# Whether the first NUL_WINDOW bytes hold a NUL byte.
+fun has_nul(buf: ?String) -> Bool
+  window = buf[..NUL_WINDOW] if buf.len > NUL_WINDOW else buf
+  text.find_any["\x00"](window, 0) != none
+
+# Whether the claiming language takes the file whose start is `buf`.
+fun claims(table: ?Table, ci: Int, buf: ?String) -> Bool
+  if ?table.langs[ci].claim as c
+    return c.test(first_line(buf))
+  false
+
+# The language a #! first line names, if any.
+fun interpreter_lang(table: ?Table, head: ?String) -> Int?
+  table.by_interpreter(shebang(head)?)
+
+# The interpreter named by a #! first line: the last component of the first
+# word, or the first word after env that is not an option.
+fun shebang(head: ?String) -> (?String)? from head
+  rest = text.strip_prefix(head, "#!")?
+  stop = text.find_any["\n\r"](rest, 0) ?? rest.len
+  words = Words(s: rest[..stop], at: 0)
+  first = (!words).next()?
+  base = first[(text.find_last(first, "/") ?? -1) + 1..]
+  return base if base != "env"
+  while (!words).next() as w
+    return w if w[0] != MINUS
+  none
+
+# The words of a line, split on spaces and tabs.
+obj Words
+  s: ?String
+  at: Int
+
+  fun next(!@) -> (?String)? from @s
+    while @at < @s.len and (@s[@at] == SPACE or @s[@at] == TAB)
+      @at += 1
+    return none if @at == @s.len
+    start = @at
+    while @at < @s.len and @s[@at] != SPACE and @s[@at] != TAB
+      @at += 1
+    @s[start..@at]
+
+# The first line of a file, after any byte-order mark and without its
+# terminator, cut at NUL_WINDOW so that the head and the whole file give the
+# same line.
+fun first_line(buf: ?String) -> ?String from buf
+  cut = buf[..NUL_WINDOW] if buf.len > NUL_WINDOW else buf
+  cut = text.strip_prefix(cut, BOM) ?? cut
+  cut[..text.find_any["\n"](cut, 0) ?? cut.len]
+
+# The name of the file a path names: the bytes after its last /.
+fun base_name(path: ?String) -> ?String from path
+  path[(text.find_last(path, "/") ?? -1) + 1..]
+
+# The bytes from the last . in a name, when that dot is not the first byte.
+fun extension(name: ?String) -> (?String)? from name
+  dot = text.find_last(name, ".") ?? return none
+  return none if dot == 0
+  name[dot..]
+
+# The skipped label of an unrecognized file: its lower-cased extension, or
+# its name when it has none.
+fun label_of(name: ?String, ext: (?String)?, lower: ?String) -> String
+  lossy(lower if ext != none else name)
+
+# Why a file call failed, in words.
+pub fun reason(e: ?error) -> String
+  match e
+    file.FileError.not_found => String(MISSING)
+    file.FileError.denied => String("permission denied")
+    file.FileError.is_directory => String("is a directory")
+    file.FileError.not_directory => String("not a directory")
+    _ => String(e)
+
+# ---- The walk --------------------------------------------------------------
+
+# The --exclude and --only patterns, each as one ignore file measured from the root being walked.
+obj Patterns
+  exclude: IgnoreFile?
+  only: IgnoreFile?
+
+# Where the walk sends what it finds. With several roots a file is sent
+# once however many roots reach it: its key is the resolved root and the
+# path below it, which, since links are never followed, is one key a file.
+obj Sender
+  jobs: *Chan[Job]
+  seen: Set[String]? = none
+  root: String = String()
+  resolved: String = String()
+
+  sub send(!@, path: String, device: Bool)!
+    if @seen != none
+      key = @key(?path)
+      if !@seen as seen
+        return if not (!seen).add(<key)
+    if device
+      !@jobs.send(Job.device(path: <path))!
+    else
+      !@jobs.send(Job.file(path: <path))!
+
+  # `resolved` for the root itself; else it, /, and the path's bytes after
+  # the root's, any leading / dropped, as Rust's component-wise paths compare.
+  fun key(?@, path: ?String) -> String
+    return String(@resolved) if path.len == @root.len
+    rest = path[@root.len..]
+    while rest.len > 0 and rest[0] == SLASH
+      rest = rest[1..]
+    String(@resolved, "/", rest)
+
+sub walk_roots(opts: ?Options, jobs: *Chan[Job])!
+  defer !jobs.close()
+  sender = Sender(jobs: +jobs, seen: Set[String]() if opts.roots.len > 1 else none)
+  for root in opts.roots
+    sender.root = +root
+    sender.resolved = (file.realpath(root) catch none) ?? +root
+    walk(root, opts, !sender)!
+
+sub walk(root: ?String, opts: ?Options, sender: !Sender)!
+  is_dir = false
+  device = false
+  if (file.stat(root) catch none) as info
+    is_dir = info.kind == .directory
+    device = info.kind != .file
+  if not is_dir
+    !sender.send(String(root), device)!
+    return
+  stack: List[IgnoreFile] = List()
+  rel = String()
+  if not opts.no_ignore
+    stack, rel = ancestors(root)
+  pats = Patterns(
+    exclude: pattern_file(?opts.excludes, offset_below(?rel)) if opts.excludes.len > 0 else none,
+    only: pattern_file(?opts.only, offset_below(?rel)) if opts.only.len > 0 else none,
+  )
+  walk_dir(root, ?rel, !stack, ?pats, pats.only == none, opts.no_ignore, !sender)!
+
+# `rel` is the directory's path relative to the base the ignore files are
+# measured from; `selected` says whether the --only patterns, if any,
+# selected the directory or one above it.
+sub walk_dir(dir: ?String, rel: ?String, stack: !List[IgnoreFile], pats: ?Patterns, selected: Bool, no_ignore: Bool, sender: !Sender)!
+  pushed = false
+  if list_dir(dir) as entries
+    # The listing says whether there is a .gitignore to read, which saves
+    # a file call in every directory that has none.
+    if not no_ignore and lists_gitignore(?entries) and read_ignore(dir, offset_below(rel)) as f
+      !stack.push(<f)
+      pushed = true
+    for e in ?entries
+      continue if e.name == ".git" or e.link or e.kind == .other
+      is_dir = e.kind == .directory
+      child_rel = String(rel, "/", e.name) if rel.len > 0 else +e.name
+      continue if ignored(?pats.exclude, ?stack, ?child_rel, ?e.name, is_dir)
+      chosen = selected
+      if not chosen and ?pats.only as only
+        chosen = selects(only, ?child_rel, ?e.name, is_dir)
+      path = join(dir, ?e.name)
+      if is_dir
+        walk_dir(?path, ?child_rel, !stack, pats, chosen, no_ignore, !sender)!
+      else if chosen
+        !sender.send(<path, false)!
+  _ = (!stack).pop() if pushed
+
+# The entries of a directory; a directory that cannot be listed is skipped with a warning.
+fun list_dir(dir: ?String) -> List[file.Entry]?
+  got = file.read_dir(dir) catch |e|
+    warn(String("loc: cannot read ", dir, ": ", reason(?e)))
+    return none
+  if got == none
+    warn(String("loc: cannot read ", dir, ": ", MISSING))
+  got
+
+fun lists_gitignore(entries: ?List[file.Entry]) -> Bool
+  for e in entries
+    return true if e.name == ".gitignore"
+  false
+
+# `name` beneath `dir`, with a / between them unless `dir` ends in one.
+fun join(dir: ?String, name: ?String) -> String
+  return String(dir, name) if text.ends_with(dir, "/")
+  String(dir, "/", name)
+
+# Opens PATH the way the walk will, so a PATH that cannot be read fails here
+# with exit code 2 instead of as a skipped file inside the walk. A symbolic
+# link is followed: PATH names its target.
+pub sub check_root(root: ?String)!
+  info = file.stat(root)! ?? return file.FileError.not_found
+  if info.kind == .directory
+    _ = file.read_dir(root)! ?? return file.FileError.not_found
+  else
+    _ = file.open(root)! ?? return file.FileError.not_found

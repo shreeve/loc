@@ -1,0 +1,446 @@
+# Line classification and the scanner, SPEC.md sections of the same names.
+# One pass over the bytes of a file; the state that survives a line is the
+# open block-comment depth, the open string, the interpolation stack, the
+# open heredoc, and the embedded language.
+
+use std.text
+
+BOM = "\xef\xbb\xbf"
+
+obj Counts
+  lines: Int = 0
+  blank: Int = 0
+  comment: Int = 0
+  code: Int = 0
+
+  sub add(!@, o: Counts)
+    @lines += o.lines
+    @blank += o.blank
+    @comment += o.comment
+    @code += o.code
+
+# The open string: a kind from the language table, a char literal, or a
+# Rust raw string with its hash count, whose closer is a quote followed by
+# that many #.
+enum Open
+  kind(i: Int)
+  char
+  rust_raw(hashes: Int)
+
+# An open interpolation: the string kind it resumes and its brace depth.
+obj Nest
+  kind: Int
+  depth: Int
+
+# A heredoc whose body runs from the line after its opener to a line equal
+# to `word`; when indented, whitespace may precede the word on that line,
+# and when loose, anything but a word byte may follow it.
+obj OpenHeredoc
+  word: ?String
+  indented: Bool
+  loose: Bool
+
+enum Class
+  str  # a byte of the line lies inside a string literal
+  blank
+  code
+  comment
+
+obj Scanner
+  table: ?Table
+  buf: ?String
+  outer: Int               # the file's language, kept while a region switches `lang`
+  lang: Int
+  block_depth: Int = 0
+  open: Open? = none
+  nests: List[Nest, inline: 4] = List()
+  heredoc: OpenHeredoc? = none
+  region: Int? = none      # index in the outer language's regions of the open embedded region
+  pending: Int? = none     # the same, of a tag whose > has not been seen yet
+
+  # Scans buf[pos..end] and classifies it, leaving the cross-line state for the next line.
+  fun line(!@, pos: Int, end: Int) -> Class
+    buf = @buf
+    if @heredoc as h
+      # the body of a heredoc opened on an earlier line, up to and including its terminator
+      content = buf[pos..end]
+      if h.indented
+        k = 0
+        while k < content.len and WHITESPACE[content[k]]
+          k += 1
+        content = content[k..]
+      ends = content == h.word
+      if h.loose
+        ends = text.starts_with(content, h.word) and (content.len == h.word.len or not is_ident(content[h.word.len]))
+      @heredoc = none if ends
+      return .str
+    saw_string = @open != none  # an empty or whitespace-only line inside a multi-line string is code
+    saw_code = false
+    saw_comment = false
+    i = pos
+
+    if @open == none and @table.langs[@lang].zig_line_string
+      j = pos
+      while j < end and WHITESPACE[buf[j]]
+        j += 1
+      if j + 1 < end and buf[j] == BACKSLASH and buf[j + 1] == BACKSLASH
+        saw_string = true
+        i = end
+
+    while i < end
+      l = ?@table.langs[@lang]
+      if @open as open
+        saw_string = true
+        k = match open
+          .kind(ki) => ?l.strings[ki]
+          .char => ?@table.char
+          .rust_raw(hashes)
+            while i < end and buf[i] != DOUBLE_QUOTE
+              i += 1
+            break if i >= end
+            i += 1
+            if i + hashes <= end and hashes_at(buf, i, hashes)
+              @open = none
+              i += hashes
+            continue
+        while i < end and not k.stop[buf[i]]
+          i += 1
+        break if i >= end
+        b = buf[i]
+        if k.escape and b == BACKSLASH
+          i += 2
+        else if open as .kind(ki) and interp_opener(k, buf, i, end) as n
+          !@nests.push(Nest(kind: ki, depth: 0))
+          @open = none
+          i += n
+        else if starts_with(buf, i, end, k.close)
+          @open = none
+          i += k.close.len
+        else
+          i += 1
+        continue
+
+      if @block_depth > 0
+        saw_comment = true
+        close0 = l.block_close[0]
+        open0 = l.block_open[0]
+        while i < end and buf[i] != close0 and not (l.nests and buf[i] == open0)
+          i += 1
+        break if i >= end
+        if l.nests and starts_with(buf, i, end, l.block_open)
+          @block_depth += 1
+          i += l.block_open.len
+        else if starts_with(buf, i, end, l.block_close)
+          @block_depth -= 1
+          i += l.block_close.len
+        else
+          i += 1
+        continue
+
+      if @pending as ri
+        # inside <tag …>: the region body begins after the >
+        saw_code = true
+        if text.find_any[">"](buf[..end], i) as k
+          i = k + 1
+          @region = ri
+          @lang = l.region_langs[ri]
+          @pending = none
+        else
+          i = end
+        continue
+
+      b = buf[i]
+      # inside a region, the closer's first byte also ends the fast skip
+      closer: U8? = none
+      if @region as ri
+        closer = closer_first(?@table.langs[@outer].regions[ri])
+      if not l.starts[b] and closer != b
+        # plain code: skip the whole run
+        saw_code = true
+        i += 1
+        while i < end and not l.starts[buf[i]] and closer != buf[i]
+          i += 1
+        continue
+      if closer == b and @region as ri and closes_region(buf, i, end, ?@table.langs[@outer].regions[ri]) as after
+        @lang = @outer
+        @region = none
+        i = after
+        saw_code = true
+        continue
+      if b == LESS_THAN
+        if opens_region(buf, i, end, l) as ri, after
+          @outer = @lang
+          match l.regions[ri]
+            .tag(_, _) => @pending = ri
+            .between(_, _, _)
+              @region = ri
+              @lang = l.region_langs[ri]
+          saw_code = true
+          i = after
+          continue
+        if l.heredoc as style and heredoc_opener(buf, i, end, style) as h, after
+          @heredoc = h
+          saw_code = true
+          i = after
+          continue
+
+      nested = @nests.len > 0
+      if WHITESPACE[b]
+        i += 1
+      else if b == BACKSLASH
+        # escapes the next byte even outside a string
+        saw_code = true
+        i += 2
+      else if b == OPEN_BRACE and nested
+        @nests[@nests.len - 1].depth += 1
+        saw_code = true
+        i += 1
+      else if b == CLOSE_BRACE and nested
+        n = @nests.len - 1
+        if @nests[n].depth == 0
+          # back into the string
+          ki = @nests[n].kind
+          _ = (!@nests).pop()
+          @open = .kind(ki)
+          saw_string = true
+        else
+          @nests[n].depth -= 1
+          saw_code = true
+        i += 1
+      else if opens_block(l, buf, pos, i, end)
+        # the block opener is tried first: where it extends the line opener (`###` and `#`), the longest match wins
+        @block_depth = 1
+        saw_comment = true
+        i += l.block_open.len
+      else if opens_line_comment(l, buf, i, end)
+        saw_comment = true
+        i = end
+      else if l.rust_raw and (b == LOWER_B or b == LOWER_R) and rust_raw_opener(buf, i, end) as hashes, after
+        @open = .rust_raw(hashes)
+        saw_string = true
+        i = after
+      else if open_string(l, buf, i, end) as ki
+        @open = .kind(ki)
+        saw_string = true
+        i += l.strings[ki].open.len
+      else if b == APOSTROPHE and l.chars as chars
+        if chars == .always or (i + 1 < buf.len and buf[i + 1] == BACKSLASH) or (i + 2 < end and buf[i + 2] == APOSTROPHE)
+          @open = .char
+          saw_string = true
+        else
+          saw_code = true
+        i += 1
+      else if b == SLASH and l.regex as words and regex_opens(buf, pos, i, words)
+        # a / the comment openers and string kinds did not claim
+        i = regex_end(buf, i + 1, end)
+        saw_string = true
+      else
+        saw_code = true
+        i += 1
+
+    if @open as open and not @spans_lines(open)
+      # an unterminated single-line string ends at the newline
+      @open = none
+    return .str if saw_string
+    return .blank if not saw_code and blank(buf[pos..end])
+    return .code if saw_code
+    return .comment if saw_comment
+    .code
+
+  fun spans_lines(?@, open: Open) -> Bool
+    match open
+      .kind(ki) => @table.langs[@lang].strings[ki].multiline
+      .char => false
+      .rust_raw(_) => true
+
+# Counts the lines of `buf` as language `lang` classifies them.
+fun scan(table: ?Table, lang: Int, buf: ?String) -> Counts
+  s = Scanner(table: table, buf: buf, outer: lang, lang: lang)
+  counts = Counts()
+  pos = BOM.len if text.starts_with(buf, BOM) else 0
+  while pos < buf.len
+    end = buf.len
+    next = buf.len
+    if text.find_any["\n"](buf, pos) as nl
+      end = nl
+      next = nl + 1
+      end -= 1 if end > pos and buf[end - 1] == CR
+    counts.lines += 1
+    match (!s).line(pos, end)
+      .str, .code => counts.code += 1
+      .blank => counts.blank += 1
+      .comment => counts.comment += 1
+    pos = next
+  counts
+
+fun blank(line: ?String) -> Bool
+  for b in line
+    return false if not WHITESPACE[b]
+  true
+
+# Whether s occurs at buf[i] without crossing end.
+fun starts_with(buf: ?String, i: Int, end: Int, s: ?String) -> Bool
+  i + s.len <= end and buf[i..i + s.len] == s
+
+# Whether s occurs at buf[i] without crossing end, ignoring ASCII case.
+fun starts_with_ci(buf: ?String, i: Int, end: Int, s: ?String) -> Bool
+  return false if i + s.len > end
+  for k in 0..s.len
+    return false if to_lower(buf[i + k]) != to_lower(s[k])
+  true
+
+# Whether `hashes` # bytes follow at buf[i].
+fun hashes_at(buf: ?String, i: Int, hashes: Int) -> Bool
+  for b in buf[i..i + hashes]
+    return false if b != HASH
+  true
+
+# The length of the interpolation opener of kind `k` at buf[i], if one is there.
+fun interp_opener(k: ?StrKind, buf: ?String, i: Int, end: Int) -> Int?
+  if k.interp as interp
+    for o in openers(interp)
+      return o.len if starts_with(buf, i, end, o)
+  none
+
+# The index of the string kind whose opener is at buf[i], longest first.
+fun open_string(l: ?Lang, buf: ?String, i: Int, end: Int) -> Int?
+  for k, ki in ?l.strings
+    return ki if starts_with(buf, i, end, k.open)
+  none
+
+# Whether a line comment opens at buf[i]; in PHP, `#[` begins an attribute and is code.
+fun opens_line_comment(l: ?Lang, buf: ?String, i: Int, end: Int) -> Bool
+  for o in l.line
+    if starts_with(buf, i, end, o)
+      attribute = l.hash_attribute and o == "#" and i + 1 < end and buf[i + 1] == OPEN_BRACKET
+      return true if not attribute
+  false
+
+# Whether a block comment opens at buf[i] on the line starting at pos: the
+# opener is there, it is the first non-whitespace of the line where the
+# language requires that, and an opener that is a run of one byte is not
+# inside a longer run (`####` is a line comment).
+fun opens_block(l: ?Lang, buf: ?String, pos: Int, i: Int, end: Int) -> Bool
+  open = l.block_open
+  return false if open.len == 0 or not starts_with(buf, i, end, open)
+  return false if l.block_at_line_start and not blank(buf[pos..i])
+  run = true
+  for b in open
+    run = false if b != open[0]
+  not (run and i + open.len < end and buf[i + open.len] == open[0])
+
+# Whether the byte at buf[i] ends a tag name: the line's end, whitespace, or one of `also`.
+fun tag_boundary(buf: ?String, i: Int, end: Int, also: ?String) -> Bool
+  return true if i >= end or WHITESPACE[buf[i]]
+  for b in also
+    return true if buf[i] == b
+  false
+
+# The region opening at buf[i] and where its opener ends: <name at a tag
+# boundary, or an opening sequence, both compared without regard to ASCII case.
+fun opens_region(buf: ?String, i: Int, end: Int, l: ?Lang) -> (Int, Int)?
+  for r, ri in ?l.regions
+    match r
+      .tag(name, _)
+        if starts_with_ci(buf, i + 1, end, name) and tag_boundary(buf, i + 1 + name.len, end, ">/")
+          return ri, i + 1 + name.len
+      .between(open, _, _)
+        if starts_with_ci(buf, i, end, open)
+          return ri, i + open.len
+  none
+
+# The byte a region's closer begins with.
+fun closer_first(r: ?Region) -> U8
+  match r
+    .tag(_, _) => LESS_THAN
+    .between(_, close, _) => close[0]
+
+# Where the region's closer beginning at buf[i] ends: </name through its > on the line, or the closing sequence.
+fun closes_region(buf: ?String, i: Int, end: Int, r: ?Region) -> Int?
+  match r
+    .tag(name, _)
+      closes = starts_with(buf, i, end, "</") and starts_with_ci(buf, i + 2, end, name) and tag_boundary(buf, i + 2 + name.len, end, ">")
+      return none if not closes
+      if text.find_any[">"](buf[..end], i) as k
+        return k + 1
+      end
+    .between(_, close, _)
+      return none if not starts_with_ci(buf, i, end, close)
+      i + close.len
+
+# A heredoc opener at buf[i]: << (<<< in PHP) then, by style, - or ~ for
+# an indented terminator, spaces, a quote or backslash around the word, and
+# the word itself; it and where the opener ends. In Ruby and Shell, <<< is
+# not one.
+fun heredoc_opener(buf: ?String, i: Int, end: Int, style: Heredoc) -> (OpenHeredoc, Int)? from buf
+  php = style == .php
+  arrows = "<<<" if php else "<<"
+  return none if not starts_with(buf, i, end, arrows)
+  return none if not php and i + 2 < end and buf[i + 2] == LESS_THAN
+  j = i + arrows.len
+  indented = php
+  if not php and j < end and (buf[j] == MINUS or (style == .ruby and buf[j] == TILDE))
+    indented = true
+    j += 1
+  if style != .ruby
+    while j < end and WHITESPACE[buf[j]]
+      j += 1
+  quote: U8? = none
+  if j < end and (buf[j] == APOSTROPHE or buf[j] == DOUBLE_QUOTE or buf[j] == BACKTICK)
+    quote = buf[j]
+    j += 1
+  else if style == .shell and j < end and buf[j] == BACKSLASH
+    j += 1
+  start = j
+  while j < end and (is_letter(buf[j]) or is_digit(buf[j]) or buf[j] == UNDERSCORE)
+    j += 1
+  return none if start == j
+  word = buf[start..j]
+  if quote as q
+    return none if j >= end or buf[j] != q
+    j += 1
+  return OpenHeredoc(word: word, indented: indented, loose: php), j
+
+# A raw string opener r#*" (optionally b-prefixed) at buf[i]: its hash count and where it ends.
+fun rust_raw_opener(buf: ?String, i: Int, end: Int) -> (Int, Int)?
+  j = i
+  j += 1 if j < end and buf[j] == LOWER_B
+  return none if j >= end or buf[j] != LOWER_R
+  j += 1
+  start = j
+  while j < end and buf[j] == HASH
+    j += 1
+  return none if j >= end or buf[j] != DOUBLE_QUOTE
+  return j - start, j + 1
+
+# The previous-byte-or-word rule for a / at buf[i] on the line starting at line_start.
+fun regex_opens(buf: ?String, line_start: Int, i: Int, words: ?List[Static]) -> Bool
+  j = i
+  while j > line_start and WHITESPACE[buf[j - 1]]
+    j -= 1
+  return true if j == line_start
+  prev = buf[j - 1]
+  return true if REGEX_PREV[prev]
+  return false if not is_ident(prev)
+  k = j - 1
+  while k > line_start and is_ident(buf[k - 1])
+    k -= 1
+  for w in words
+    return true if buf[k..j] == w
+  false
+
+fun regex_end(buf: ?String, at: Int, end: Int) -> Int
+  i = at
+  in_class = false
+  while i < end
+    b = buf[i]
+    if b == BACKSLASH
+      i += 1
+    else if b == OPEN_BRACKET
+      in_class = true
+    else if b == CLOSE_BRACKET
+      in_class = false
+    else if b == SLASH and not in_class
+      return i + 1
+    i += 1
+  end

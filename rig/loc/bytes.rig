@@ -1,0 +1,75 @@
+# The bytes the scanner, the matcher, and the flags name, as Trig names them.
+
+TAB: U8 = 0x09
+LINE_FEED: U8 = 0x0A
+VERTICAL_TAB: U8 = 0x0B
+FORM_FEED: U8 = 0x0C
+CR: U8 = 0x0D
+SPACE: U8 = 0x20
+EXCLAMATION: U8 = 0x21
+DOUBLE_QUOTE: U8 = 0x22
+HASH: U8 = 0x23
+DOLLAR: U8 = 0x24
+PERCENT: U8 = 0x25
+APOSTROPHE: U8 = 0x27
+OPEN_PAREN: U8 = 0x28
+CLOSE_PAREN: U8 = 0x29
+ASTERISK: U8 = 0x2A
+PLUS: U8 = 0x2B
+MINUS: U8 = 0x2D
+SLASH: U8 = 0x2F
+DIGIT_0: U8 = 0x30
+DIGIT_9: U8 = 0x39
+SEMICOLON: U8 = 0x3B
+LESS_THAN: U8 = 0x3C
+EQUALS: U8 = 0x3D
+GREATER_THAN: U8 = 0x3E
+QUESTION: U8 = 0x3F
+UPPER_A: U8 = 0x41
+UPPER_Z: U8 = 0x5A
+OPEN_BRACKET: U8 = 0x5B
+BACKSLASH: U8 = 0x5C
+CLOSE_BRACKET: U8 = 0x5D
+CARET: U8 = 0x5E
+UNDERSCORE: U8 = 0x5F
+BACKTICK: U8 = 0x60
+LOWER_A: U8 = 0x61
+LOWER_B: U8 = 0x62
+LOWER_R: U8 = 0x72
+LOWER_Z: U8 = 0x7A
+OPEN_BRACE: U8 = 0x7B
+CLOSE_BRACE: U8 = 0x7D
+TILDE: U8 = 0x7E
+
+# Whitespace for the blank rule is exactly these bytes (SPEC, Files); the
+# regex rule's previous bytes are SPEC's list (Scanner).
+enum ByteSet
+  whitespace
+  regex_prev
+
+fun byte_set[s: ByteSet] -> [256]Bool
+  t = [256 of false]
+  for b in 0..=U8.max
+    t[b] = match s
+      .whitespace => match b
+        SPACE, TAB, CR, FORM_FEED, VERTICAL_TAB => true
+        _ => false
+      .regex_prev => match b
+        OPEN_PAREN, 0x2C, EQUALS, 0x3A, OPEN_BRACKET, EXCLAMATION, 0x26, 0x7C, QUESTION, OPEN_BRACE, CLOSE_BRACE, SEMICOLON, PLUS, MINUS, ASTERISK, PERCENT, LESS_THAN, GREATER_THAN, TILDE, CARET => true
+        _ => false
+  t
+
+WHITESPACE = byte_set[.whitespace]
+REGEX_PREV = byte_set[.regex_prev]
+
+fun is_ident(b: U8) -> Bool
+  (b >= LOWER_A and b <= LOWER_Z) or (b >= UPPER_A and b <= UPPER_Z) or (b >= DIGIT_0 and b <= DIGIT_9) or b == UNDERSCORE or b == DOLLAR
+
+fun is_letter(b: U8) -> Bool
+  (b >= UPPER_A and b <= UPPER_Z) or (b >= LOWER_A and b <= LOWER_Z)
+
+fun is_digit(b: U8) -> Bool
+  b >= DIGIT_0 and b <= DIGIT_9
+
+fun to_lower(b: U8) -> U8
+  b + 32 if b >= UPPER_A and b <= UPPER_Z else b
