@@ -37,17 +37,11 @@ test "sizes follow the spec rule"
   true
 
 test "dedup keys agree however a root is spelled"
-  s = Sender(jobs: *Chan[Job](1), resolved: String("/abs/src"))
-  s.root = String("src")
-  return false if s.key("src") != "/abs/src"
-  return false if s.key("src/main.rs") != "/abs/src/main.rs"
-  s.root = String("src/")
-  return false if s.key("src/main.rs") != "/abs/src/main.rs"
-  s.root = String("./src")
-  return false if s.key("./src/lib/b.rs") != "/abs/src/lib/b.rs"
-  s.root = String("src/main.rs")
-  s.resolved = String("/abs/src/main.rs")
-  s.key("src/main.rs") == "/abs/src/main.rs"
+  return false if dedup_key("src", "/abs/src", "src") != "/abs/src"
+  return false if dedup_key("src", "/abs/src", "src/main.rs") != "/abs/src/main.rs"
+  return false if dedup_key("src/", "/abs/src", "src/main.rs") != "/abs/src/main.rs"
+  return false if dedup_key("./src", "/abs/src", "./src/lib/b.rs") != "/abs/src/lib/b.rs"
+  dedup_key("src/main.rs", "/abs/src/main.rs", "src/main.rs") == "/abs/src/main.rs"
 
 test "roots are cleaned as Rust cleans them"
   cwd = os.cwd()!

@@ -135,7 +135,7 @@ fun parse_ignore(body: ?String, offset: Int) -> IgnoreFile
 
 # One that cannot be read is none, as Rust's `.ok()` makes it; the walk reports the file.
 fun read_ignore(dir: ?String, offset: Int) -> IgnoreFile?
-  body = (file.read(String(dir, "/.gitignore")) catch none)?
+  body = (file.read(join(dir, ".gitignore")) catch none)?
   parse_ignore(?body, offset)
 
 fun pattern_file(lines: ?List[String], offset: Int) -> IgnoreFile
@@ -172,7 +172,7 @@ fun ignored(excludes: ?IgnoreFile?, stack: ?List[IgnoreFile], rel: ?String, name
   false
 
 fun has_git(dir: ?String) -> Bool
-  (file.stat(String(dir, "/.git")) catch none) != none
+  (file.stat(join(dir, ".git")) catch none) != none
 
 # Cleaned lexically, as Rust's `absolute` and `components` clean it.
 fun absolute(root: ?String) -> String
@@ -226,5 +226,5 @@ fun below(base: ?String, path: ?String) -> ?String from path
   path[base.len + 1..]
 
 fun offset_below(dir_rel: ?String) -> Int
-  return 0 if dir_rel.len == 0 or dir_rel == "."
+  return 0 if dir_rel.len == 0
   dir_rel.len + 1

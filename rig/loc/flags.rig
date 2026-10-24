@@ -1,3 +1,4 @@
+use std.slices
 use std.text
 
 pub USAGE = "Usage: loc [OPTIONS] [PATH...]"
@@ -74,9 +75,7 @@ pub obj Options
   pub ?roots: List[String] = List()
 
   pub fun only_lang(?@) -> Bool
-    for named in @only_langs
-      return true if named
-    false
+    slices.contains(?@only_langs, true)
 
 # -h, then --languages, anywhere before -- win over every other flag; then
 # one pass, the first error winning. A value may start with -.
@@ -128,7 +127,7 @@ pub fun parse(args: []Static, table: ?Table) -> Command!Usage
       opts.jobs = n
     else
       return Usage.unknown_flag(flag: lossy(arg))
-  return Usage.both_lang_flags if opts.only_lang() and any(?opts.excluded_langs)
+  return Usage.both_lang_flags if opts.only_lang() and slices.contains(?opts.excluded_langs, true)
   !opts.roots.push(String(".")) if opts.roots.len == 0
   Command.run(opts: <opts)
 
@@ -143,8 +142,3 @@ fun language(table: ?Table, flag: Static, name: Static?) -> Int!Usage
   given = name ?? ""
   return Usage.needs_language(flag: flag) if given.len == 0
   table.by_language(given) ?? return Usage.unknown_language(name: lossy(given))
-
-fun any(flags: ?List[Bool]) -> Bool
-  for set in flags
-    return true if set
-  false

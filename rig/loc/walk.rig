@@ -3,6 +3,7 @@
 
 use std.file
 use std.math
+use std.slices
 use std.task
 use std.text
 
@@ -82,26 +83,32 @@ obj LangFilter
   excluded: List[Bool]
   only: Bool
   shebangs: Bool
+  by_name: Bool  # whether a name alone can drop a file
 
 fun lang_filter(table: ?Table, opts: ?Options) -> LangFilter
-  return LangFilter(excluded: +opts.excluded_langs, only: false, shebangs: true) if not opts.only_lang()
+  if not opts.only_lang()
+    return LangFilter(excluded: +opts.excluded_langs, only: false, shebangs: true, by_name: slices.contains(?opts.excluded_langs, true))
   excluded: List[Bool] = List()
   shebangs = false
   for named, i in opts.only_langs
     !excluded.push(not named)
     shebangs = true if named and table.langs[i].shebangs.len > 0
-  LangFilter(excluded: <excluded, only: true, shebangs: shebangs)
+  LangFilter(excluded: <excluded, only: true, shebangs: shebangs, by_name: true)
+
+# The drops of `load` that read nothing, so the walker sends no such file.
+fun dropped_by_name(table: ?Table, filter: ?LangFilter, name: ?String) -> Bool
+  ext = extension(name)
+  lower = ascii_lower(ext ?? "")
+  li = table.by_extension(?lower) if ext != none else none
+  lang = li ?? table.by_file_name(name) ?? return filter.only and (ext != none or not filter.shebangs)
+  ci = (table.claimant(?lower) if ext != none else none) ?? return filter.excluded[lang]
+  filter.excluded[lang] and filter.excluded[ci]
 
 # A device or FIFO PATH is read only up to the size it reports, as Rust's
 # `take(size)` reads it, so a link to /dev/zero ends.
-enum Job
-  file(path: String)
-  device(path: String)
-
-fun job_parts(job: Job) -> (String, Bool)
-  match <job
-    .file(path) => return path, false
-    .device(path) => return path, true
+obj Job
+  path: String
+  device: Bool = false
 
 pub fun count_trees(table: ?Table, opts: ?Options) -> Sums!
   counters = COUNTERS
@@ -114,7 +121,7 @@ pub fun count_trees(table: ?Table, opts: ?Options) -> Sums!
   turns = *Chan[Int](READ_CAP)
   for k in 0..READ_CAP
     !turns.send(k)!
-  w = walk_roots(opts, +jobs)&
+  w = walk_roots(table, ?filter, opts, +jobs)&
   ts = Tasks[Sums!]()
   for 0..counters
     !ts.add(counter(table, ?filter, +jobs, +turns, opts.by_file)&)
@@ -129,11 +136,10 @@ pub fun count_trees(table: ?Table, opts: ?Options) -> Sums!
 fun counter(table: ?Table, filter: ?LangFilter, jobs: *Chan[Job], turns: *Chan[Int], by_file: Bool) -> Sums!
   s = empty_sums(table.langs.len, by_file)
   while (!jobs).recv()! as job
-    path, device = job_parts(<job)
-    turn = (!turns).recv()! ?? 0
-    loaded = load(table, filter, ?path, device)
+    turn = (!turns).recv()! ?? break  # never closed
+    loaded = load(table, filter, ?job.path, job.device)
     !turns.send(turn)!
-    !s.take(table, <loaded, <path)
+    !s.take(table, <loaded, swap(!job.path, String()))
   s
 
 enum Loaded
@@ -194,7 +200,7 @@ fun load(table: ?Table, filter: ?LangFilter, path: ?String, device: Bool) -> Loa
 MISSING = "no such file or directory"
 
 fun unreadable(path: ?String, e: ?error) -> Loaded
-  warn(String("loc: cannot read ", path, ": ", reason(e)))
+  warn(String("loc: cannot read ", lossy(path), ": ", reason(e)))
   .unreadable(bytes: size_on_disk(path))
 
 obj Head
@@ -261,6 +267,7 @@ fun shebang(head: ?String) -> (?String)? from head
     return w if w[0] != MINUS
   none
 
+# Space and tab only, as Rust splits; text.words also splits at VT and FF.
 obj Words
   s: ?String
   at: Int
@@ -310,31 +317,28 @@ obj Patterns
 # file has one key below its resolved root.
 obj Sender
   jobs: *Chan[Job]
+  table: ?Table
+  filter: ?LangFilter
   seen: Set[String]? = none
   root: String = String()
   resolved: String = String()
 
-  sub send(!@, path: String, device: Bool)!
-    if @seen != none
-      key = @key(?path)
-      if !@seen as seen
-        return if not (!seen).add(<key)
-    if device
-      !@jobs.send(Job.device(path: <path))!
-    else
-      !@jobs.send(Job.file(path: <path))!
+  sub send(!@, job: Job)!
+    if !@seen as seen
+      return if not (!seen).add(dedup_key(?@root, ?@resolved, ?job.path))
+    !@jobs.send(<job)!
 
-  # Leading / dropped, as Rust's component-wise paths compare.
-  fun key(?@, path: ?String) -> String
-    return String(@resolved) if path.len == @root.len
-    rest = path[@root.len..]
-    while rest.len > 0 and rest[0] == SLASH
-      rest = rest[1..]
-    String(@resolved, "/", rest)
+# Leading / dropped, as Rust's component-wise paths compare.
+fun dedup_key(root: ?String, resolved: ?String, path: ?String) -> String
+  return String(resolved) if path.len == root.len
+  rest = path[root.len..]
+  while rest.len > 0 and rest[0] == SLASH
+    rest = rest[1..]
+  String(resolved, "/", rest)
 
-sub walk_roots(opts: ?Options, jobs: *Chan[Job])!
+sub walk_roots(table: ?Table, filter: ?LangFilter, opts: ?Options, jobs: *Chan[Job])!
   defer !jobs.close()
-  sender = Sender(jobs: +jobs, seen: Set[String]() if opts.roots.len > 1 else none)
+  sender = Sender(jobs: +jobs, table: table, filter: filter, seen: Set[String]() if opts.roots.len > 1 else none)
   for root in opts.roots
     sender.root = +root
     sender.resolved = (file.realpath(root) catch none) ?? +root
@@ -347,7 +351,7 @@ sub walk(root: ?String, opts: ?Options, sender: !Sender)!
     is_dir = info.kind == .directory
     device = info.kind != .file
   if not is_dir
-    !sender.send(String(root), device)!
+    !sender.send(Job(path: String(root), device: device))!
     return
   stack: List[IgnoreFile] = List()
   rel = String()
@@ -376,19 +380,18 @@ sub walk_dir(dir: ?String, rel: ?String, stack: !List[IgnoreFile], pats: ?Patter
       chosen = selected
       if not chosen and ?pats.only as only
         chosen = selects(only, ?child_rel, ?e.name, is_dir)
-      path = join(dir, ?e.name)
       if is_dir
-        walk_dir(?path, ?child_rel, !stack, pats, chosen, no_ignore, !sender)!
-      else if chosen
-        !sender.send(<path, false)!
+        walk_dir(?join(dir, ?e.name), ?child_rel, !stack, pats, chosen, no_ignore, !sender)!
+      else if chosen and not (sender.filter.by_name and dropped_by_name(sender.table, sender.filter, ?e.name))
+        !sender.send(Job(path: join(dir, ?e.name)))!
   _ = (!stack).pop() if pushed
 
 fun list_dir(dir: ?String) -> List[file.Entry]?
   got = file.read_dir(dir) catch |e|
-    warn(String("loc: cannot read ", dir, ": ", reason(?e)))
+    warn(String("loc: cannot read ", lossy(dir), ": ", reason(?e)))
     return none
   if got == none
-    warn(String("loc: cannot read ", dir, ": ", MISSING))
+    warn(String("loc: cannot read ", lossy(dir), ": ", MISSING))
   got
 
 fun lists_gitignore(entries: ?List[file.Entry]) -> Bool
