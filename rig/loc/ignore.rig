@@ -160,15 +160,23 @@ fun decides(f: ?IgnoreFile, rel: ?String, name: ?String, is_dir: Bool) -> Bool?
 fun selects(only: ?IgnoreFile, rel: ?String, name: ?String, is_dir: Bool) -> Bool
   decides(only, rel, name, is_dir) == true
 
+# The ignore files that apply in a directory: its own, then those above.
+obj Ignores
+  files: ?List[IgnoreFile]
+  up: (?Ignores)? = none
+
 # --exclude decides first, then the deepest file with a matching line.
-fun ignored(excludes: ?IgnoreFile?, stack: ?List[IgnoreFile], rel: ?String, name: ?String, is_dir: Bool) -> Bool
+fun ignored(excludes: ?IgnoreFile?, ignores: ?Ignores, rel: ?String, name: ?String, is_dir: Bool) -> Bool
   if excludes as x and decides(x, rel, name, is_dir) as status
     return status
-  i = stack.len
-  while i > 0
-    i -= 1
-    if decides(?stack[i], rel, name, is_dir) as status
-      return status
+  at: (?Ignores)? = ignores
+  while at as node
+    i = node.files.len
+    while i > 0
+      i -= 1
+      if decides(?node.files[i], rel, name, is_dir) as status
+        return status
+    at = node.up
   false
 
 fun has_git(dir: ?String) -> Bool

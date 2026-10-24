@@ -3,7 +3,9 @@
 `rig/` holds a second implementation of loc, built as `bin/loco`. It is
 held to `SPEC.md` and the four expected documents in `fixtures/`, byte
 for byte, styled output included. The Rust code is never changed; the
-Rig version sits beside it. Toolchain: Rig 0.2.9, Zig 0.17.0.
+Rig version sits beside it. Toolchain: Rig 0.2.9 at main 60d2b2394 or
+later, whose blocking pool (Rig #624) bounds the file calls in flight,
+and Zig 0.17.0.
 
 ## Principles
 
@@ -74,18 +76,28 @@ cannot be read is no ignore file (Rust's `.ok()`), with no warning; the
 walk meets the file itself and reports it. A line of only spaces is no
 pattern.
 
-**Walker and counters.** One walker task sends a `Job` (path, and whether
-the PATH is a device) through a channel to counting tasks. Every file
-call in a program that makes tasks goes to the blocking pool, so a walk
-that ran first would add 13 to 17% of Rust's time on trig; overlapping
-the two removes it. Sums merge at the end, so order cannot matter.
+**Walkers and counters.** Walker tasks send each `Job` (path, and
+whether the PATH is a device) through a channel to counting tasks. Every
+file call in a program that makes tasks goes to the blocking pool, so a
+walk that ran first would add 13 to 17% of Rust's time on trig;
+overlapping the two removes it. Sums merge at the end and every report
+row sorts by its own key, so no order can change the output.
 
-- **`READ_CAP = 6` read turns.** A channel of 6 tokens limits the files in
-  their file calls; a counter takes one before a file's first call and
-  returns it after its last, before the scan. The blocking pool runs as
-  many calls as tasks wait on it, up to 64 threads, so without the cap
-  the task count sets the I/O concurrency and brings back the kernel
-  contention Rust's semaphore avoids (2,725 ms against 1,986 ms on trig).
+- **Up to `WALKERS = 16` walker tasks.** Each directory listing is a pool
+  call, which a single walker waits out one at a time; Rust's one walker
+  does too. A subdirectory gets a task of its own while fewer than 16
+  walkers are listing (a `*Cell[Int]` counted with `add` and `sub`),
+  and is walked in place otherwise. A walker waiting for its own tasks
+  leaves its turn to another. The ignore files are an `Ignores` chain: a
+  directory's own, then a view of its parent's, so a subdirectory's task
+  reads them in place, and each frame waits for its tasks before it ends.
+  On trig, walk-only: 290 ms with one walker, 142 with 4, 120 with 16,
+  against Rust's 190. With several roots one walker lists them all,
+  since the dedup set is one task's.
+- **No read cap of loco's own.** The pool keeps the file calls in flight
+  near the performance cores, which is where the kernel stops gaining
+  from more. A token channel on top of it only made reads wait:
+  `~/Data/Code/rig` took 185 ms with 6 tokens and 143 ms without.
 - **2N counters with `--jobs N`, 64 without.** `--jobs N` is `N` workers
   (capped at 64) and `2N` counting tasks: with one task per worker each
   worker sleeps through every pool call, and two overlap one file's I/O
@@ -120,8 +132,7 @@ and then, up to 64 KiB, a whole `file.read` and a look at the first 8192
 bytes: two pool calls and no descriptor of its own (414 ms for trig's
 29,312 head files, against 1,082 ms for open, read, stat). The whole
 file is kept, so a file that counts is not read twice. A larger file is
-`file.open` and reads of the bytes still wanted up to 8192; `File.read`
-allocates `max` bytes per call, so `max` stays small. A `.m` file with
+`file.open` and reads of the bytes still wanted, 8192 at a time. A `.m` file with
 exactly one of Objective-C and MUMPS excluded reads the head, decides,
 and reads the rest only when it counts. A failed `read`, `open`, or
 `stat` is `unreadable`, with a warning.
@@ -153,23 +164,22 @@ corpus with identical counts: Rust 243 ms, Rig 196 ms. `--release=fast`
 gains nothing, so the program builds with `--release` (safe); the rest of
 the gap is I/O and concurrency.
 
-The target is Rust's wall time within 25% on `~/Data/Code/trig` with no
-ignore rules (125,268 files) and on `loc .` of Trig. Interleaved runs,
-fastest of five, two rounds, on a machine at load 9 to 10:
+On `~/Data/Code/trig` with no ignore rules (125,268 files), on Trig with
+them, and on smaller trees. Interleaved runs, fastest of five, three
+rounds, on a 10-core machine (4 performance cores) at load 7 to 15:
 
 | Run | Rust | Rig | Ratio |
 |---|---|---|---|
-| `--no-ignore --json ~/Data/Code/trig` | 2,067 / 2,043 ms | 2,236 / 2,266 ms | 1.09x |
-| the same, `--jobs=1` | 3,529 / 3,492 ms | 3,071 / 3,131 ms | 0.88x |
-| `--no-ignore --json -l python ~/Data/Code/trig` | 267 / 275 ms | 332 / 353 ms | 1.26x |
-| `--json ~/Data/Code/trig` | 23.5 / 25.4 ms | 28.3 / 30.1 ms | 1.19x |
-| `~/Data/Code/trig/src` | 10.3 / 10.9 ms | 13.8 / 15.5 ms | 1.38x |
+| `--no-ignore --json ~/Data/Code/trig` | 1,898 / 2,085 / 1,933 ms | 1,487 / 1,406 / 1,614 ms | 0.67–0.84x |
+| the same, `--jobs=1` | 3,326 / 3,527 / 3,311 ms | 3,108 / 3,495 / 3,325 ms | 0.93–1.00x |
+| `--no-ignore --json -l python ~/Data/Code/trig` | 225 / 237 / 247 ms | 133 / 156 / 166 ms | 0.59–0.67x |
+| `--no-ignore --json -o zzznomatch ~/Data/Code/trig` (the walk) | 197 / 220 / 219 ms | 121 / 154 / 149 ms | 0.61–0.70x |
+| `--json ~/Data/Code/trig` | 23.3 / 30.9 / 25.1 ms | 25.6 / 33.2 / 28.0 ms | 1.07–1.11x |
+| `--json ~/Data/Code/rig` | 145 / 153 / 158 ms | 146 / 173 / 176 ms | 1.01–1.13x |
+| `~/Data/Code/trig/src` | 10.8 / 17.3 / 11.0 ms | 15.1 / 22.0 / 15.7 ms | 1.3–1.4x |
 
-The walk itself is the rest of the gap on filtered runs: `read_dir`
-costs more than Rust's listing (see the asks below).
-
-A small tree pays a few milliseconds more than Rust; about 2 ms is
-starting the scheduler's workers.
+A small tree pays about 4 ms more than Rust, most of it starting the
+scheduler's workers.
 
 ## Where the two implementations differ
 
@@ -197,17 +207,14 @@ of `test.sh`. The Rig version follows SPEC, or the closest Rig gives.
 
 Measured here; none blocks loco.
 
-- `File.read(!buf, max)` allocates `max` bytes per call, dups the
-  descriptor under a global lock, and copies: 1 MiB chunks took 9 s
-  against 3.8 s for `file.read`.
-- `read_dir` sorts, copies each name twice, uses a 2 KiB buffer, and
-  makes one pool hop per directory.
+- Every file call is a hop to the blocking pool and a wake back: in C,
+  a hop per file cost 42% on one thread. A worker with nothing else to
+  run could make a regular-file call itself (approved for Rig, not yet
+  built); loco's walker tasks only overlap the hops.
 - No open-only readability check exists, so `check_root` lists a
   directory.
 - An error mid-listing fails the whole `read_dir`; Rust skips the entry.
 - A closed stdout gives the error reason "Unexpected".
-- The blocking pool has no cap a program can set; a
-  `task.blocking_threads(n)` would replace the token channel.
 - Starting the workers costs about 2 ms; `par.map` with `limit: 1`
   starts every worker.
 - `task.workers(n)` caps at 64 without saying so.

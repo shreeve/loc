@@ -9,9 +9,9 @@ use std.text
 
 NUL_WINDOW = 8192     # a file is binary if a NUL byte appears this early
 SMALL = 65536         # read whole to look at its head, in one call
-READ_CAP = 6          # files in their file calls at once: more contend in the kernel
 MOST_WORKERS = 64     # task.workers' cap
 COUNTERS = 64         # counting tasks without --jobs
+WALKERS = 16          # walker tasks listing directories at once, overlapping their calls
 
 obj Skipped
   files: Int = 0
@@ -118,13 +118,10 @@ pub fun count_trees(table: ?Table, opts: ?Options) -> Sums!
     counters = 2 * n     # one file's reads overlap another's scan
   filter = lang_filter(table, opts)
   jobs = *Chan[Job](1024)
-  turns = *Chan[Int](READ_CAP)
-  for k in 0..READ_CAP
-    !turns.send(k)!
   w = walk_roots(table, ?filter, opts, +jobs)&
   ts = Tasks[Sums!]()
   for 0..counters
-    !ts.add(counter(table, ?filter, +jobs, +turns, opts.by_file)&)
+    !ts.add(counter(table, ?filter, +jobs, opts.by_file)&)
   done = (>ts)!
   >w!
   total = empty_sums(table.langs.len, opts.by_file)
@@ -132,13 +129,12 @@ pub fun count_trees(table: ?Table, opts: ?Options) -> Sums!
     !total.add(<s)
   total
 
-# A turn covers a file's calls, not its scan.
-fun counter(table: ?Table, filter: ?LangFilter, jobs: *Chan[Job], turns: *Chan[Int], by_file: Bool) -> Sums!
+# The blocking pool bounds the file calls in flight, which more would
+# contend for in the kernel.
+fun counter(table: ?Table, filter: ?LangFilter, jobs: *Chan[Job], by_file: Bool) -> Sums!
   s = empty_sums(table.langs.len, by_file)
   while (!jobs).recv()! as job
-    turn = (!turns).recv()! ?? break  # never closed
     loaded = load(table, filter, ?job.path, job.device)
-    !turns.send(turn)!
     !s.take(table, <loaded, swap(!job.path, String()))
   s
 
@@ -314,11 +310,14 @@ obj Patterns
   only: IgnoreFile?
 
 # With several roots, a file is sent once: links are never followed, so a
-# file has one key below its resolved root.
+# file has one key below its resolved root, and one walker lists them all.
+# With one root, up to `most` walker tasks list directories at once.
 obj Sender
   jobs: *Chan[Job]
   table: ?Table
   filter: ?LangFilter
+  walkers: *Cell[Int]  # walker tasks listing, not waiting for their own
+  most: Int = 1
   seen: Set[String]? = none
   root: String = String()
   resolved: String = String()
@@ -327,6 +326,22 @@ obj Sender
     if !@seen as seen
       return if not (!seen).add(dedup_key(?@root, ?@resolved, ?job.path))
     !@jobs.send(<job)!
+
+  # Whether a directory gets a walker task of its own.
+  fun spawns(!@) -> Bool
+    return true if (!@walkers).add(1) <= @most
+    _ = (!@walkers).sub(1)
+    false
+
+  fun kid(?@) -> Sender
+    Sender(jobs: +@jobs, table: @table, filter: @filter, walkers: +@walkers, most: @most)
+
+  # A walker waiting for its own tasks leaves its turn to another.
+  sub rests(!@)
+    _ = (!@walkers).sub(1)
+
+  sub resumes(!@)
+    _ = (!@walkers).add(1)
 
 # Leading / dropped, as Rust's component-wise paths compare.
 fun dedup_key(root: ?String, resolved: ?String, path: ?String) -> String
@@ -338,7 +353,8 @@ fun dedup_key(root: ?String, resolved: ?String, path: ?String) -> String
 
 sub walk_roots(table: ?Table, filter: ?LangFilter, opts: ?Options, jobs: *Chan[Job])!
   defer !jobs.close()
-  sender = Sender(jobs: +jobs, table: table, filter: filter, seen: Set[String]() if opts.roots.len > 1 else none)
+  several = opts.roots.len > 1
+  sender = Sender(jobs: +jobs, table: table, filter: filter, walkers: *Cell(1), most: 1 if several else WALKERS, seen: Set[String]() if several else none)
   for root in opts.roots
     sender.root = +root
     sender.resolved = (file.realpath(root) catch none) ?? +root
@@ -361,30 +377,46 @@ sub walk(root: ?String, opts: ?Options, sender: !Sender)!
     exclude: pattern_file(?opts.excludes, offset_below(?rel)) if opts.excludes.len > 0 else none,
     only: pattern_file(?opts.only, offset_below(?rel)) if opts.only.len > 0 else none,
   )
-  walk_dir(root, ?rel, !stack, ?pats, pats.only == none, opts.no_ignore, !sender)!
+  above = Ignores(files: ?stack)
+  walk_dir(root, ?rel, ?above, ?pats, pats.only == none, opts.no_ignore, !sender)!
 
 # `rel` is below the ignore files' base; `selected` is whether --only chose
-# this directory or one above it.
-sub walk_dir(dir: ?String, rel: ?String, stack: !List[IgnoreFile], pats: ?Patterns, selected: Bool, no_ignore: Bool, sender: !Sender)!
-  pushed = false
-  if list_dir(dir) as entries
-    # Only a listed .gitignore is read, saving a call in every other directory.
-    if not no_ignore and lists_gitignore(?entries) and read_ignore(dir, offset_below(rel)) as f
-      !stack.push(<f)
-      pushed = true
-    for e in ?entries
-      continue if e.name == ".git" or e.link or e.kind == .other
-      is_dir = e.kind == .directory
-      child_rel = String(rel, "/", e.name) if rel.len > 0 else +e.name
-      continue if ignored(?pats.exclude, ?stack, ?child_rel, ?e.name, is_dir)
-      chosen = selected
-      if not chosen and ?pats.only as only
-        chosen = selects(only, ?child_rel, ?e.name, is_dir)
-      if is_dir
-        walk_dir(?join(dir, ?e.name), ?child_rel, !stack, pats, chosen, no_ignore, !sender)!
-      else if chosen and not (sender.filter.by_name and dropped_by_name(sender.table, sender.filter, ?e.name))
-        !sender.send(Job(path: join(dir, ?e.name)))!
-  _ = (!stack).pop() if pushed
+# this directory or one above it. A subdirectory's task reads this frame's
+# ignore files in place, so the frame waits for its tasks before it ends.
+sub walk_dir(dir: ?String, rel: ?String, ignores: ?Ignores, pats: ?Patterns, selected: Bool, no_ignore: Bool, sender: !Sender)!
+  entries = list_dir(dir) ?? return
+  mine: List[IgnoreFile] = List()
+  # Only a listed .gitignore is read, saving a call in every other directory.
+  if not no_ignore and lists_gitignore(?entries) and read_ignore(dir, offset_below(rel)) as f
+    !mine.push(<f)
+  here = Ignores(files: ?mine, up: ignores)
+  kids = Tasks[Bool!]()
+  spawned = false
+  for e in ?entries
+    continue if e.name == ".git" or e.link or e.kind == .other
+    is_dir = e.kind == .directory
+    child_rel = String(rel, "/", e.name) if rel.len > 0 else +e.name
+    continue if ignored(?pats.exclude, ?here, ?child_rel, ?e.name, is_dir)
+    chosen = selected
+    if not chosen and ?pats.only as only
+      chosen = selects(only, ?child_rel, ?e.name, is_dir)
+    if is_dir and (!sender).spawns()
+      !kids.add(walk_task(join(dir, ?e.name), <child_rel, ?here, pats, chosen, no_ignore, sender.kid())&)
+      spawned = true
+    else if is_dir
+      walk_dir(?join(dir, ?e.name), ?child_rel, ?here, pats, chosen, no_ignore, !sender)!
+    else if chosen and not (sender.filter.by_name and dropped_by_name(sender.table, sender.filter, ?e.name))
+      !sender.send(Job(path: join(dir, ?e.name)))!
+  return if not spawned
+  !sender.rests()
+  _ = (>kids)!
+  !sender.resumes()
+
+fun walk_task(dir: String, rel: String, ignores: ?Ignores, pats: ?Patterns, selected: Bool, no_ignore: Bool, sender: Sender) -> Bool!
+  s = <sender
+  walk_dir(?dir, ?rel, ignores, pats, selected, no_ignore, !s)!
+  !s.rests()
+  true
 
 fun list_dir(dir: ?String) -> List[file.Entry]?
   got = file.read_dir(dir) catch |e|
