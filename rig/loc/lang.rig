@@ -1,4 +1,6 @@
+use std.slices
 use std.sort
+use std.text
 
 # Openers of code inside a string, each closed by its matching `}`.
 DOLLAR_OPENERS = ["${"]
@@ -130,20 +132,14 @@ pub obj Table
       return i if l.listed() and same_ignoring_case(l.name, name)
     none
 
-  pub fun count(?@) -> Int
-    @langs.len
-
 fun same_ignoring_case(a: ?String, b: ?String) -> Bool
-  return false if a.len != b.len
-  for i in 0..a.len
-    return false if to_lower(a[i]) != to_lower(b[i])
-  true
+  a.len == b.len and starts_with_ci(a, 0, a.len, b)
 
 fun ascii_lower(s: ?String) -> String
   out = String()
   !out.reserve(s.len)
   for b in s
-    !out.push(to_lower(b))
+    !out.push(text.to_lower(b))
   out
 
 fun c_family(name: Static, extensions: List[Static], color: [3]U8) -> Lang
@@ -167,6 +163,17 @@ fun js_family(name: Static, extensions: List[Static], color: [3]U8) -> Lang
     block_close: "*/",
     strings: List([tick(), dq(), sq()]),
     regex: List(JS_REGEX_WORDS),
+    color: color,
+  )
+
+fun css_family(name: Static, extensions: List[Static], color: [3]U8) -> Lang
+  Lang(
+    name: name,
+    extensions: <extensions,
+    line: List(["//"]),
+    block_open: "/*",
+    block_close: "*/",
+    strings: List([dq(), sq()]),
     color: color,
   )
 
@@ -426,12 +433,8 @@ pub fun languages() -> Table
   !langs.push(css_family("Less", List([".less"]), [0x1d, 0x36, 0x5d]))
   php = markup("PHP", List([".php", ".phtml"]), [0x4f, 0x5d, 0x95])
   php.shebangs = List(["php"])
-  php.regions = List([
-    Region.tag(name: "script", lang: "JavaScript"),
-    Region.tag(name: "style", lang: "CSS"),
-    Region.between(open: "<?php", close: "?>", lang: "PHP code"),
-    Region.between(open: "<?=", close: "?>", lang: "PHP code"),
-  ])
+  !php.regions.push(Region.between(open: "<?php", close: "?>", lang: "PHP code"))
+  !php.regions.push(Region.between(open: "<?=", close: "?>", lang: "PHP code"))
   !langs.push(<php)
   # The rules inside <?php … ?>, never a row of its own.
   !langs.push(Lang(
@@ -469,25 +472,14 @@ pub fun languages() -> Table
   prepare(!langs)
   indexed(<langs)
 
-fun css_family(name: Static, extensions: List[Static], color: [3]U8) -> Lang
-  Lang(
-    name: name,
-    extensions: <extensions,
-    line: List(["//"]),
-    block_open: "/*",
-    block_close: "*/",
-    strings: List([dq(), sq()]),
-    color: color,
-  )
-
 # A MUMPS routine's first line: `;` at column zero, or an optional label
 # and formal list, then spaces or tabs, then `;`.
 fun mumps_routine(first: ?String) -> Bool
   return true if first.len > 0 and first[0] == SEMICOLON
   i = 0
-  if first.len > 0 and (first[0] == PERCENT or is_letter(first[0]))
+  if first.len > 0 and (first[0] == PERCENT or text.is_alpha(first[0]))
     i = 1
-    while i < first.len and (is_letter(first[i]) or is_digit(first[i]))
+    while i < first.len and (text.is_alpha(first[i]) or text.is_digit(first[i]))
       i += 1
     if i < first.len and first[i] == OPEN_PAREN
       while i < first.len and first[i] != CLOSE_PAREN
@@ -521,11 +513,9 @@ sub prepare(langs: !List[Lang])
       want = match r
         .tag(_, lang) => lang
         .between(_, _, lang) => lang
-      for name, j in names
-        if name == want
-          !l.region_langs.push(j)
-    for b in [SPACE, TAB, CR, FORM_FEED, VERTICAL_TAB, BACKSLASH]
-      l.starts[b] = true
+      !l.region_langs.push(slices.index_of(names, want) ?? panic("no language named", want))
+    l.starts = WHITESPACE
+    l.starts[BACKSLASH] = true
     for o in l.line
       l.starts[o[0]] = true
     if l.block_open.len > 0
@@ -548,7 +538,7 @@ sub prepare(langs: !List[Lang])
 fun indexed(langs: List[Lang]) -> Table
   t = Table(
     langs: <langs,
-    char: kind("'", "'", true, false),
+    char: sq(),
     by_ext: Map[String, Int](),
     by_claim: Map[String, Int](),
     by_name: Map[String, Int](),

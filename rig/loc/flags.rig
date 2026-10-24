@@ -90,7 +90,7 @@ pub fun parse(args: []Static, table: ?Table) -> Command!Usage
     plain = true if a == "--no-color"
   return Command.languages(no_color: plain) if listing
 
-  opts = Options(excluded_langs: List.filled(table.count(), false), only_langs: List.filled(table.count(), false))
+  opts = Options(excluded_langs: List.filled(table.langs.len, false), only_langs: List.filled(table.langs.len, false))
   flags = true  # until --
   i = 0
   while i < args.len : i += 1

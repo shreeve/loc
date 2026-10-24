@@ -1,6 +1,7 @@
 # The scanner: one pass over a file's bytes. What survives a line is the
 # open comment, string, interpolations, heredoc, and embedded language.
 
+use std.slices
 use std.text
 
 BOM = "\xef\xbb\xbf"
@@ -35,7 +36,6 @@ obj OpenHeredoc
   loose: Bool
 
 enum Class
-  str  # a byte lies inside a string
   blank
   code
   comment
@@ -66,10 +66,10 @@ obj Scanner
       if h.loose
         ends = text.starts_with(content, h.word) and (content.len == h.word.len or not is_ident(content[h.word.len]))
       @heredoc = none if ends
-      return .str
-    saw_string = @open != none  # a blank line inside a string is code
-    saw_code = false
-    saw_comment = false
+      return .code
+    # A byte in a string or in code makes the line code; a line without
+    # one is blank or, every other byte in a comment, comment.
+    code = @open != none
     i = pos
 
     if @open == none and @table.langs[@lang].zig_line_string
@@ -77,13 +77,13 @@ obj Scanner
       while j < end and WHITESPACE[buf[j]]
         j += 1
       if j + 1 < end and buf[j] == BACKSLASH and buf[j + 1] == BACKSLASH
-        saw_string = true
+        code = true
         i = end
 
     while i < end
       l = ?@table.langs[@lang]
       if @open as open
-        saw_string = true
+        code = true
         k = match open
           .kind(ki) => ?l.strings[ki]
           .char => ?@table.char
@@ -114,7 +114,6 @@ obj Scanner
         continue
 
       if @block_depth > 0
-        saw_comment = true
         close0 = l.block_close[0]
         open0 = l.block_open[0]
         while i < end and buf[i] != close0 and not (l.nests and buf[i] == open0)
@@ -131,7 +130,7 @@ obj Scanner
         continue
 
       if @pending as ri
-        saw_code = true
+        code = true
         if text.find_any[">"](buf[..end], i) as k
           i = k + 1
           @region = ri
@@ -147,7 +146,7 @@ obj Scanner
       if @region as ri
         closer = closer_first(?@table.langs[@outer].regions[ri])
       if not l.starts[b] and closer != b
-        saw_code = true
+        code = true
         i += 1
         while i < end and not l.starts[buf[i]] and closer != buf[i]
           i += 1
@@ -156,7 +155,7 @@ obj Scanner
         @lang = @outer
         @region = none
         i = after
-        saw_code = true
+        code = true
         continue
       if b == LESS_THAN
         if opens_region(buf, i, end, l) as ri, after
@@ -166,74 +165,59 @@ obj Scanner
             .between(_, _, _)
               @region = ri
               @lang = l.region_langs[ri]
-          saw_code = true
+          code = true
           i = after
           continue
         if l.heredoc as style and heredoc_opener(buf, i, end, style) as h, after
           @heredoc = h
-          saw_code = true
+          code = true
           i = after
           continue
 
-      nested = @nests.len > 0
       if WHITESPACE[b]
         i += 1
-      else if b == BACKSLASH
-        # escapes the next byte outside a string too
-        saw_code = true
-        i += 2
+        continue
+      nested = @nests.len > 0
+      if b == BACKSLASH
+        i += 2  # escapes the next byte outside a string too
       else if b == OPEN_BRACE and nested
         @nests[@nests.len - 1].depth += 1
-        saw_code = true
         i += 1
       else if b == CLOSE_BRACE and nested
         n = @nests.len - 1
         if @nests[n].depth == 0
-          ki = @nests[n].kind
+          @open = .kind(@nests[n].kind)
           _ = (!@nests).pop()
-          @open = .kind(ki)
-          saw_string = true
         else
           @nests[n].depth -= 1
-          saw_code = true
         i += 1
       else if opens_block(l, buf, pos, i, end)
         # before the line opener, so `###` beats `#`
         @block_depth = 1
-        saw_comment = true
         i += l.block_open.len
+        continue
       else if opens_line_comment(l, buf, i, end)
-        saw_comment = true
-        i = end
+        break
       else if l.rust_raw and (b == LOWER_B or b == LOWER_R) and rust_raw_opener(buf, i, end) as hashes, after
         @open = .rust_raw(hashes)
-        saw_string = true
         i = after
       else if open_string(l, buf, i, end) as ki
         @open = .kind(ki)
-        saw_string = true
         i += l.strings[ki].open.len
       else if b == APOSTROPHE and l.chars as chars
-        if chars == .always or (i + 1 < buf.len and buf[i + 1] == BACKSLASH) or (i + 2 < end and buf[i + 2] == APOSTROPHE)
-          @open = .char
-          saw_string = true
-        else
-          saw_code = true
+        @open = .char if chars == .always or (i + 1 < end and buf[i + 1] == BACKSLASH) or (i + 2 < end and buf[i + 2] == APOSTROPHE)
         i += 1
       else if b == SLASH and l.regex as words and regex_opens(buf, pos, i, words)
         i = regex_end(buf, i + 1, end)
-        saw_string = true
       else
-        saw_code = true
         i += 1
+      code = true
 
     if @open as open and not @spans_lines(open)
       @open = none
-    return .str if saw_string
-    return .blank if not saw_code and blank(buf[pos..end])
-    return .code if saw_code
-    return .comment if saw_comment
-    .code
+    return .code if code
+    return .blank if blank(buf[pos..end])
+    .comment
 
   fun spans_lines(?@, open: Open) -> Bool
     match open
@@ -246,15 +230,12 @@ fun scan(table: ?Table, lang: Int, buf: ?String) -> Counts
   counts = Counts()
   pos = BOM.len if text.starts_with(buf, BOM) else 0
   while pos < buf.len
-    end = buf.len
-    next = buf.len
-    if text.find_any["\n"](buf, pos) as nl
-      end = nl
-      next = nl + 1
-      end -= 1 if end > pos and buf[end - 1] == CR
+    end = text.find_any["\n"](buf, pos) ?? buf.len
+    next = end + 1
+    end -= 1 if next <= buf.len and end > pos and buf[end - 1] == CR
     counts.lines += 1
     match (!s).line(pos, end)
-      .str, .code => counts.code += 1
+      .code => counts.code += 1
       .blank => counts.blank += 1
       .comment => counts.comment += 1
     pos = next
@@ -271,7 +252,7 @@ fun starts_with(buf: ?String, i: Int, end: Int, s: ?String) -> Bool
 fun starts_with_ci(buf: ?String, i: Int, end: Int, s: ?String) -> Bool
   return false if i + s.len > end
   for k in 0..s.len
-    return false if to_lower(buf[i + k]) != to_lower(s[k])
+    return false if text.to_lower(buf[i + k]) != text.to_lower(s[k])
   true
 
 fun hashes_at(buf: ?String, i: Int, hashes: Int) -> Bool
@@ -315,6 +296,7 @@ fun tag_boundary(buf: ?String, i: Int, end: Int, also: ?String) -> Bool
     return true if buf[i] == b
   false
 
+# The region a `<` opens, and where its opener ends.
 fun opens_region(buf: ?String, i: Int, end: Int, l: ?Lang) -> (Int, Int)?
   for r, ri in ?l.regions
     match r
@@ -331,6 +313,7 @@ fun closer_first(r: ?Region) -> U8
     .tag(_, _) => LESS_THAN
     .between(_, close, _) => close[0]
 
+# Where the region's closer ends; a tag with no `>` on the line closes at its end.
 fun closes_region(buf: ?String, i: Int, end: Int, r: ?Region) -> Int?
   match r
     .tag(name, _)
@@ -365,7 +348,7 @@ fun heredoc_opener(buf: ?String, i: Int, end: Int, style: Heredoc) -> (OpenHered
   else if style == .shell and j < end and buf[j] == BACKSLASH
     j += 1
   start = j
-  while j < end and (is_letter(buf[j]) or is_digit(buf[j]) or buf[j] == UNDERSCORE)
+  while j < end and (text.is_alpha(buf[j]) or text.is_digit(buf[j]) or buf[j] == UNDERSCORE)
     j += 1
   return none if start == j
   word = buf[start..j]
@@ -374,6 +357,7 @@ fun heredoc_opener(buf: ?String, i: Int, end: Int, style: Heredoc) -> (OpenHered
     j += 1
   return OpenHeredoc(word: word, indented: indented, loose: php), j
 
+# The hashes of `r#"`, `br#"` and the like, and where the opener ends.
 fun rust_raw_opener(buf: ?String, i: Int, end: Int) -> (Int, Int)?
   j = i
   j += 1 if j < end and buf[j] == LOWER_B
@@ -396,9 +380,7 @@ fun regex_opens(buf: ?String, line_start: Int, i: Int, words: ?List[Static]) -> 
   k = j - 1
   while k > line_start and is_ident(buf[k - 1])
     k -= 1
-  for w in words
-    return true if buf[k..j] == w
-  false
+  slices.contains(words, buf[k..j])
 
 fun regex_end(buf: ?String, at: Int, end: Int) -> Int
   i = at
