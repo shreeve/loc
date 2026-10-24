@@ -248,6 +248,7 @@ pub fun language_list(table: ?Table, styled: Bool) -> String
     for n in l.names
       !items.push(n)
     lines = wrap(?items)
+    !lines.push(String()) if lines.len == 0
     for cell, k in <lines
       first = String(prefix, l.name) if k == 0 else String()
       cells: List[String] = List()
@@ -320,7 +321,10 @@ sub json_str(out: !String, s: ?String)
       TAB => !out.add("\\t")
       0x08 => !out.add("\\b")
       FORM_FEED => !out.add("\\f")
-      c if c < SPACE => !out.add("\\u00", HEX[Int(c) >> 4], HEX[Int(c) & 15])
+      c if c < SPACE
+        !out.add("\\u00")
+        !out.push(HEX[Int(c) >> 4])
+        !out.push(HEX[Int(c) & 15])
       _ => !out.push(b)
   !out.push(DOUBLE_QUOTE)
 

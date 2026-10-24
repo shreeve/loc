@@ -125,10 +125,10 @@ fun parse_ignore(body: ?String, offset: Int) -> IgnoreFile
   patterns: List[Pattern] = List()
   for piece in text.split(body, "\n")
     entry = text.strip_suffix(piece, "\r") ?? piece
-    continue if entry.len == 0 or entry[0] == HASH
     # trailing spaces go unless the last is escaped
     while entry.len > 0 and entry[entry.len - 1] == SPACE and not (entry.len > 1 and entry[entry.len - 2] == BACKSLASH)
       entry = entry[..entry.len - 1]
+    continue if entry.len == 0 or entry[0] == HASH
     if compile_pattern(entry) as p
       !patterns.push(<p)
   IgnoreFile(offset: offset, patterns: <patterns)

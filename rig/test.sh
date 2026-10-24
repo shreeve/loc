@@ -5,6 +5,7 @@
 # `rig/test.sh NAME...` runs only those. Build first with rig/build.sh.
 
 set -u
+[[ -z ${LOC:-} || $LOC == /* ]] || LOC=$PWD/$LOC
 cd "$(dirname "$0")/.."
 ROOT=$PWD
 LOC=${LOC:-$ROOT/bin/loco}  # LOC=target/release/loc runs the same checks on the Rust loc
@@ -186,12 +187,14 @@ a_symlink_inside_a_walk_is_neither_followed_nor_counted() {
 
 help_matches_the_spec() {
   scratch
-  is "$(stdout --help)" "$(block_after "$ROOT/SPEC.md" "## Command line")"
+  run --help
+  cmp -s "$SCRATCH/.out" <(block_after "$ROOT/SPEC.md" "## Command line") || fail "--help is not SPEC.md's block" "$out"
 }
 
 readme_usage_is_the_help_output() {
   scratch
-  is "$(stdout -h)" "$(block_after "$ROOT/README.md" "## Usage")"
+  run -h
+  cmp -s "$SCRATCH/.out" <(block_after "$ROOT/README.md" "## Usage") || fail "-h is not README.md's block" "$out"
 }
 
 several_paths_sum_and_a_file_reached_twice_counts_once() {
@@ -416,7 +419,7 @@ only_lang_counts_named_languages_and_reports_only_their_misses() {
   put notes.txt $'x\n'
   printf 'x\0y' >data.bin
   printf 'x\0y' >blob
-  local rust table two missed
+  local rust two
   rust=$(stdout --json --only-lang rust .)
   is "$(files_of "$rust" Rust)" 1
   is "$(entry "$rust" Python)" ""
@@ -670,9 +673,15 @@ an_unreadable_directory_inside_a_walk_is_skipped_with_a_warning() {
 no_color_and_jobs_do_not_change_output_and_path_defaults_to_dot() {
   scratch
   put a.rs $'x\n'
-  is "$(stdout .)" "$(stdout --no-color .)"
+  run .
+  cp "$SCRATCH/.out" "$SCRATCH/.want"
+  run --no-color .
+  cmp -s "$SCRATCH/.want" "$SCRATCH/.out" || fail "--no-color changed the output" "$out"
   is "$(files_of "$(stdout --json)" Rust)" 1
-  is "$(stdout --json "$ROOT/fixtures/cases")" "$(stdout --json --jobs 1 "$ROOT/fixtures/cases")"
+  run --json "$ROOT/fixtures/cases"
+  cp "$SCRATCH/.out" "$SCRATCH/.want"
+  run --json --jobs 1 "$ROOT/fixtures/cases"
+  cmp -s "$SCRATCH/.want" "$SCRATCH/.out" || fail "--jobs 1 changed the output" "$out"
 }
 
 a_path_with_dot_dot_components_is_counted() {
@@ -692,6 +701,52 @@ json_escapes_a_label_and_the_table_separates_thousands() {
   for ((i = 0; i < 1234; i++)); do big+=$'x\n'; done
   put big.rs "$big"
   has "$(stdout .)" "1,234"
+}
+
+# ---- Checks beyond tests/cli.rs ----------------------------------------------
+# The Rust loc fails the last two: it panics on a line of only spaces, and
+# sizes a linked PATH as the link, where SPEC follows it.
+
+json_escapes_control_bytes_as_u_escapes() {
+  scratch
+  put $'c\x01\x1f\x7f.rs' $'x\n'
+  put $'l.\x02' $'x\n'
+  local json
+  json=$(stdout --json --by-file .)
+  has "$json" '"path":"c\u0001\u001f'$'\x7f''.rs"'
+  has "$json" '"label":".\u0002"'
+}
+
+styled_output_has_the_bar_dots_and_dim_rules() {
+  scratch
+  put a.rs $'x\n'
+  script -q /dev/null true >/dev/null 2>&1 </dev/null || return 0  # BSD script only
+  local styled
+  styled=$(env -u NO_COLOR TERM=xterm script -q /dev/null "$LOC" . </dev/null | tr -d '\r')
+  has "$styled" $'\e[38;2;222;165;132m\e[48;2;222;165;132m'"█"
+  has "$styled" $'\e[38;2;222;165;132m'"●"$'\e[0m Rust'
+  has "$styled" $'\e[2m'"─"
+  has "$styled" $'\e[1m  Language'
+}
+
+an_ignore_line_of_only_spaces_has_no_effect() {
+  scratch
+  mkdir .git
+  put .gitignore $'   \n*.log\n'
+  put a.rs $'x\n'
+  put b.log $'x\n'
+  run --json .
+  is "$status" 0
+  has "$out" '"total":{"files":1,'
+  run --json -e ' ' .
+  is "$status" 0
+}
+
+a_linked_path_reports_its_target_size() {
+  scratch
+  printf 'x\0yyyyyyyyy' >big.png
+  ln -s big.png l.png
+  has "$(stdout --json l.png)" '"binary":{"files":1,"bytes":11,'
 }
 
 # ---- Running -------------------------------------------------------------------
@@ -744,6 +799,10 @@ CHECKS=(
   no_color_and_jobs_do_not_change_output_and_path_defaults_to_dot
   a_path_with_dot_dot_components_is_counted
   json_escapes_a_label_and_the_table_separates_thousands
+  json_escapes_control_bytes_as_u_escapes
+  styled_output_has_the_bar_dots_and_dim_rules
+  an_ignore_line_of_only_spaces_has_no_effect
+  a_linked_path_reports_its_target_size
 )
 
 [ -x "$LOC" ] || { echo "no $LOC; build it with rig/build.sh" >&2; exit 2; }
@@ -760,7 +819,6 @@ for name in "${@:-${CHECKS[@]}}"; do
     echo "FAIL  $name"
     cat "$SCRATCH/.log"
   fi
-  cd "$ROOT"
 done
 echo "$passed passed, $failed failed"
 [ "$failed" -eq 0 ]

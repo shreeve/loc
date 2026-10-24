@@ -2,13 +2,15 @@
 # merge at the end; no order can change a sum.
 
 use std.file
+use std.math
 use std.task
 use std.text
 
 NUL_WINDOW = 8192     # a file is binary if a NUL byte appears this early
 SMALL = 65536         # read whole to look at its head, in one call
 READ_CAP = 6          # files in their file calls at once: more contend in the kernel
-COUNTERS = 64         # without --jobs: twice the most workers the scheduler runs
+MOST_WORKERS = 64     # task.workers' cap
+COUNTERS = 64         # counting tasks without --jobs
 
 obj Skipped
   files: Int = 0
@@ -103,7 +105,8 @@ fun job_parts(job: Job) -> (String, Bool)
 
 pub fun count_trees(table: ?Table, opts: ?Options) -> Sums!
   counters = COUNTERS
-  if opts.jobs as n
+  if opts.jobs as asked
+    n = math.min(asked, MOST_WORKERS)
     _ = task.workers(n)  # before the first task, which starts the workers
     counters = 2 * n     # one file's reads overlap another's scan
   filter = lang_filter(table, opts)

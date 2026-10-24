@@ -9,7 +9,7 @@ test "the README's language count matches the table"
   t = languages()
   recognizable = 0
   for l in t.langs
-    recognizable += 1 if l.listed()
+    recognizable += 1 if l.extensions.len > 0 or l.names.len > 0 or l.shebangs.len > 0
   text.contains(?readme, String("in ", recognizable, " languages."))
 
 test "the bar is full blocks on their own color"
