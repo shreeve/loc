@@ -1,6 +1,3 @@
-# The report and its two renderings, SPEC.md Output. The JSON is the
-# conformance format; the table is for people.
-
 use std.sort
 use std.text
 use std.utf8
@@ -14,12 +11,12 @@ RULE = "\u{2500}"
 DOT_GLYPH = "\u{25cf}"
 FULL_BLOCK = "\u{2588}"
 ELLIPSIS = "\u{2026}"
-WRAP = 40        # widest a --languages column grows before its items continue on the next line
-PATH_WIDTH = 40  # widest a --by-file path is shown before it loses leading directories
+WRAP = 40        # widest a --languages column grows
+PATH_WIDTH = 40  # widest a --by-file path is shown
 SHOWN_LABELS = 10
 
 obj FileEntry
-  path: String     # as shown: a leading ./ dropped, made valid UTF-8
+  path: String     # as shown: no leading ./, valid UTF-8
   counts: Counts
   bytes: Int
 
@@ -36,7 +33,6 @@ obj SkippedLabel
   files: Int
   bytes: Int
 
-# Skipped files of one kind, text or binary: labels in report order and their sum.
 obj SkippedGroup
   labels: List[SkippedLabel] = List()
   files: Int = 0
@@ -59,9 +55,9 @@ pub obj Report
   text: SkippedGroup
   binary: SkippedGroup
   by_file: Bool
-  only_lang: Bool  # the skipped section is left out when it would be empty
+  only_lang: Bool  # leave out an empty skipped section
 
-  # The JSON as JSON.stringify writes it: one object, no whitespace, then a newline.
+  # As JSON.stringify writes it.
   pub fun json(?@) -> String
     out = String("{\"languages\":[")
     for row, i in ?@languages
@@ -90,13 +86,8 @@ pub obj Report
     !out.add("}}\n")
     out
 
-  # The language bar: one run of FULL BLOCK glyphs per language with code,
-  # foreground and background both the language's color, touching, each at
-  # least one cell, the rest by code share with floor and largest
-  # remainder, ties in table order. The glyphs keep the bar visible under
-  # a selection that repaints cell backgrounds; the background fills the
-  # gaps a terminal leaves when it draws the glyph from a font that does
-  # not cover the whole cell.
+  # Glyphs keep the bar under a selection that repaints backgrounds; the
+  # background fills what a font's glyph leaves of the cell.
   called fun bar(?@, width: Int) -> String
     rows: List[Int] = List()
     for l, i in ?@languages
@@ -128,8 +119,7 @@ pub obj Report
 
   pub fun table(?@, styled: Bool) -> String
     prefix = "  " if styled else ""  # room for the dot on language rows
-    # The body's rows, then the total row, which the grid sizes with them.
-    # A language row carries its color for the dot; a file row under it has none.
+    # The body's rows, then the total row; a file row has no color.
     rows: List[List[String]] = List()
     colors: List[([3]U8)?] = List()
     for l in ?@languages
@@ -150,9 +140,7 @@ pub obj Report
     put_line(!out, styled, DIM, g.rule())
     put_line(!out, styled, BOLD, g.line(?g.headers))
     put_line(!out, styled, DIM, g.rule())
-    # With --by-file every language is a framed section: a rule above its
-    # row, except the first, whose rule is the header's, and a rule below
-    # it before its files.
+    # With --by-file every language is a framed section.
     for cells, i in ?rows[..body]
       text_line = g.line(?cells)
       if colors[i] as c
@@ -210,9 +198,6 @@ pub obj Report
       put_line(!out, styled, DIM, <b)
     out
 
-# Orders the sums as the spec requires: languages by code descending then
-# name, files within a language by code descending then path, labels by
-# size descending then label, all byte-wise.
 pub fun report(table: ?Table, sums: Sums, only_lang: Bool) -> Report
   rows: List[LangRow] = List()
   row_of = List.filled(table.langs.len, -1)
@@ -244,19 +229,14 @@ pub fun report(table: ?Table, sums: Sums, only_lang: Bool) -> Report
     only_lang: only_lang,
   )
 
-# The --languages table: every language a file can be recognized as, by
-# name, with the extensions and file names it claims, in the language
-# table's layout. A cell's items wrap onto continuation lines so no column
-# exceeds WRAP characters.
 pub fun language_list(table: ?Table, styled: Bool) -> String
   prefix = "  " if styled else ""
   order: List[Int] = List()
   for l, i in ?table.langs
     !order.push(i) if l.listed()
   sort.sort_by(!order, |?table, a, b| table.langs[a].name < table.langs[b].name)
-  # Each language becomes one or more physical rows; only the first carries the name.
   rows: List[List[String]] = List()
-  firsts: List[Int] = List()   # the language of each first row, or -1
+  firsts: List[Int] = List()   # the language a row starts, or -1
   for i in order
     l = ?table.langs[i]
     items: List[Static] = List()
@@ -289,7 +269,6 @@ pub fun language_list(table: ?Table, styled: Bool) -> String
       !out.add(shown, "\n")
   out
 
-# Joins items with single spaces into lines no longer than WRAP, breaking only between items.
 fun wrap(items: ?List[Static]) -> List[String]
   lines: List[String] = List()
   for item in items
@@ -300,10 +279,7 @@ fun wrap(items: ?List[Static]) -> List[String]
       !lines.push(String(item))
   lines
 
-# A path shown in the table loses whole leading directories, replaced by
-# …/, until it is within PATH_WIDTH characters or only the file name is
-# left. The file name is never cut, so a name over the cap is the one thing
-# that can widen the column.
+# Whole leading directories go until the path fits; the name is never cut.
 fun shorten(path: ?String) -> String
   return String(path) if utf8.rune_count(path) <= PATH_WIDTH
   rest = path
@@ -315,14 +291,10 @@ fun shorten(path: ?String) -> String
   return String(path) if not cut  # a bare name over the cap
   String(ELLIPSIS, "/", rest)
 
-# A path as the report shows it: a PATH of . says nothing about where the
-# file is, so a leading ./ is dropped; then any bytes that are not UTF-8
-# become U+FFFD.
 fun shown_path(path: ?String) -> String
   lossy(text.strip_prefix(path, "./") ?? path)
 
-# `bytes` as valid UTF-8, each maximal ill-formed subpart one U+FFFD, as
-# Rust's String::from_utf8_lossy writes it.
+# As Rust's String::from_utf8_lossy writes it.
 pub fun lossy(bytes: ?String) -> String
   out = String()
   !out.reserve(bytes.len)
@@ -337,8 +309,6 @@ pub fun lossy(bytes: ?String) -> String
     utf8.push_rune(!out, utf8.REPLACEMENT)
   out
 
-# JSON.stringify's string escaping: quote, backslash, and control bytes;
-# everything else as is.
 sub json_str(out: !String, s: ?String)
   !out.push(DOUBLE_QUOTE)
   for b in s
@@ -387,22 +357,18 @@ called fun skipped_row(label: String, files: Int, bytes: Int, whole: Int) -> Lis
   !cells.push(share(bytes, whole))
   cells
 
-# The headers of a grid, the first after the prefix that makes room for a dot.
 fun header_cells(prefix: Static, names: []Static) -> List[String]
   out: List[String] = List()
   for name, i in names
     !out.push(String(prefix if i == 0 else "", name))
   out
 
-# One line of a table, styled or plain, then its newline.
 sub put_line(out: !String, styled: Bool, code: Static, s: String)
   if styled
     !out.add(code, s, RESET, "\n")
   else
     !out.add(s, "\n")
 
-# Bytes to one decimal in the smallest unit from KB up that keeps the
-# tenths below 10,000, or TB; under 1000 bytes whole.
 fun size(bytes: Int) -> String
   return String(bytes, " B") if bytes < 1000
   b = U128(bytes)  # bytes × 10 must not overflow
@@ -424,7 +390,7 @@ fun with_commas(n: Int) -> String
     !out.push(c)
   out
 
-# part/whole to one decimal in integer arithmetic, so every implementation rounds alike.
+# In integers, so every implementation rounds alike.
 fun share(part: Int, whole: Int) -> String
   return String("0.0") if whole == 0
   tenths = (part * 1000 + whole / 2) / whole
@@ -436,14 +402,11 @@ fun fg(c: [3]U8) -> String
 fun bg(c: [3]U8) -> String
   String("\x1b[48;2;", c[0], ";", c[1], ";", c[2], "m")
 
-# A grid lays out rows under a header: first column left-aligned, the rest
-# right-aligned (or all left-aligned) and at least MIN_WIDTH wide,
-# four-space gutters, a rule as wide as the header. Widths are in
-# characters.
+# Widths are in characters, as Rust counts them.
 obj Grid
   headers: List[String]
   widths: List[Int]
-  left: Bool  # every column left-aligned
+  left: Bool
 
   fun line(?@, cells: ?List[String]) -> String
     out = String()

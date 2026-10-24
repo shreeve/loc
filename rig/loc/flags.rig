@@ -1,6 +1,3 @@
-# The command line, SPEC.md Command line: what to do, or the usage error
-# that stops it.
-
 use std.text
 
 pub USAGE = "Usage: loc [OPTIONS] [PATH...]"
@@ -55,7 +52,6 @@ pub error Usage
   bad_jobs
   both_lang_flags
 
-# What a usage error says, before the usage line.
 pub fun describe(e: ?Usage) -> String
   match e
     .unknown_flag(flag) => String("loc: unknown flag ", flag)
@@ -77,16 +73,13 @@ pub obj Options
   jobs: Int? = none            # none: a worker per core
   pub ?roots: List[String] = List()
 
-  # Whether --only-lang names a language, so the skipped section shows only their misses.
   pub fun only_lang(?@) -> Bool
     for named in @only_langs
       return true if named
     false
 
-# -h or --help anywhere before -- wins, before any other flag is judged;
-# then --languages anywhere before --; then one pass over the arguments, in
-# order, the first error winning. A flag's value is in the same argument
-# after = or in the next one, which it takes even when it starts with -.
+# -h, then --languages, anywhere before -- win over every other flag; then
+# one pass, the first error winning. A value may start with -.
 pub fun parse(args: []Static, table: ?Table) -> Command!Usage
   listing = false
   plain = false
@@ -139,7 +132,6 @@ pub fun parse(args: []Static, table: ?Table) -> Command!Usage
   !opts.roots.push(String(".")) if opts.roots.len == 0
   Command.run(opts: <opts)
 
-# The value of a flag that takes one: after = in the same argument, or the next argument.
 fun value(args: []Static, i: !Int, flag: Static) -> Static?
   arg = args[i]
   if arg.len > flag.len and text.starts_with(arg, flag) and arg[flag.len] == EQUALS
@@ -147,7 +139,6 @@ fun value(args: []Static, i: !Int, flag: Static) -> Static?
   i += 1
   args.get(i)
 
-# The language a flag's value names, as --languages prints it.
 fun language(table: ?Table, flag: Static, name: Static?) -> Int!Usage
   given = name ?? ""
   return Usage.needs_language(flag: flag) if given.len == 0

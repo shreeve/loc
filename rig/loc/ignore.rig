@@ -7,12 +7,12 @@ use std.os
 use std.text
 
 enum Step
-  byte(b: U8)                    # one literal byte
-  any                            # * : zero or more bytes other than /
-  one                            # ? : one byte other than /
-  class(set: Int, inside: Bool)  # […] : one byte other than /, in the pattern's `sets[set]` (inside) or outside it
-  any_dirs                       # a leading **/ or a middle /**/ : nothing, or any run of bytes ending in /
-  rest                           # a trailing /** : anything at all
+  byte(b: U8)
+  any                            # *
+  one                            # ?
+  class(set: Int, inside: Bool)  # […], its set in the pattern's `sets`
+  any_dirs                       # **/ at the start, or /**/
+  rest                           # /** at the end
 
 obj Pattern
   negate: Bool
@@ -21,9 +21,7 @@ obj Pattern
   steps: List[Step]
   sets: List[[256]Bool]
 
-# An ignore file and how far below the base directory it sits, as a byte
-# offset into the relative path of the entries it applies to:
-# rel[offset..] is an entry's path relative to the file's own directory.
+# rel[offset..] is an entry's path relative to the ignore file's directory.
 obj IgnoreFile
   offset: Int
   patterns: List[Pattern]
@@ -39,8 +37,7 @@ fun compile_pattern(text_line: ?String) -> Pattern?
   steps, sets = compile_glob(glob)?
   Pattern(negate: negate, dir_only: dir_only, anchored: anchored, steps: <steps, sets: <sets)
 
-# `none` when a [ has no closing ]: git's matcher gives up on such a line,
-# so it matches nothing.
+# `none` for an unclosed [: git's matcher then matches nothing.
 fun compile_glob(glob: ?String) -> (List[Step], List[[256]Bool])?
   steps: List[Step] = List()
   sets: List[[256]Bool] = List()
@@ -77,8 +74,7 @@ fun compile_glob(glob: ?String) -> (List[Step], List[[256]Bool])?
       i += 1
   return steps, sets
 
-# Reads a bracket set starting at glob[0] == '[': the set, whether a byte
-# matches by being inside it, and the number of bytes the set took.
+# The set, whether a byte matches inside it, and the bytes it took.
 fun compile_class(glob: ?String) -> ([256]Bool, Bool, Int)?
   set = [256 of false]
   inside = true
@@ -106,7 +102,6 @@ fun compile_class(glob: ?String) -> ([256]Bool, Bool, Int)?
       j += 1
   none
 
-# Whether p's steps from `at` match subject to the end of both.
 fun matches(p: ?Pattern, at: Int, subject: ?String) -> Bool
   return subject.len == 0 if at == p.steps.len
   match p.steps[at]
@@ -138,14 +133,11 @@ fun parse_ignore(body: ?String, offset: Int) -> IgnoreFile
       !patterns.push(<p)
   IgnoreFile(offset: offset, patterns: <patterns)
 
-# The .gitignore of `dir`, or `none` when it has none or it cannot be read:
-# the walk meets the file itself, and reports it if it is unreadable.
+# One that cannot be read is none, as Rust's `.ok()` makes it; the walk reports the file.
 fun read_ignore(dir: ?String, offset: Int) -> IgnoreFile?
   body = (file.read(String(dir, "/.gitignore")) catch none)?
   parse_ignore(?body, offset)
 
-# --exclude or --only patterns as one ignore file, each pattern a line,
-# measured from the directory at offset.
 fun pattern_file(lines: ?List[String], offset: Int) -> IgnoreFile
   joined = String()
   for p, i in lines
@@ -153,8 +145,7 @@ fun pattern_file(lines: ?List[String], offset: Int) -> IgnoreFile
     !joined.add(p)
   parse_ignore(?joined, offset)
 
-# The status a file's lines give a path: that of the last matching line, or
-# `none` when no line matches.
+# The last matching line decides.
 fun decides(f: ?IgnoreFile, rel: ?String, name: ?String, is_dir: Bool) -> Bool?
   i = f.patterns.len
   while i > 0
@@ -165,14 +156,11 @@ fun decides(f: ?IgnoreFile, rel: ?String, name: ?String, is_dir: Bool) -> Bool?
     return not p.negate if matches(p, 0, subject)
   none
 
-# Whether a path's own last matching --only line selects it. A selected
-# directory selects everything beneath it, which the walk carries down, so
-# no later line can take a path inside it back.
+# A selected directory selects all beneath it; the walk carries that down.
 fun selects(only: ?IgnoreFile, rel: ?String, name: ?String, is_dir: Bool) -> Bool
   decides(only, rel, name, is_dir) == true
 
-# The --exclude patterns decide first; then the deepest file with a
-# matching line, and within a file the last matching line.
+# --exclude decides first, then the deepest file with a matching line.
 fun ignored(excludes: ?IgnoreFile?, stack: ?List[IgnoreFile], rel: ?String, name: ?String, is_dir: Bool) -> Bool
   if excludes as x and decides(x, rel, name, is_dir) as status
     return status
@@ -183,14 +171,10 @@ fun ignored(excludes: ?IgnoreFile?, stack: ?List[IgnoreFile], rel: ?String, name
       return status
   false
 
-# Whether an entry named .git, file or directory, is in `dir`; a directory
-# that cannot be read has none.
 fun has_git(dir: ?String) -> Bool
   (file.stat(String(dir, "/.git")) catch none) != none
 
-# `root` made absolute and cleaned lexically, as Rust's `absolute` and a
-# walk over its components make it: split on /, empty and . components
-# dropped, .. popping one but never above /.
+# Cleaned lexically, as Rust's `absolute` and `components` clean it.
 fun absolute(root: ?String) -> String
   whole = String(root) if text.starts_with(root, "/") else String(os.cwd() catch String(), "/", root)
   kept: List[?String] = List()
@@ -205,14 +189,12 @@ fun absolute(root: ?String) -> String
   return String("/") if out.len == 0
   out
 
-# The ignore files between the nearest ancestor holding .git and root, and
-# root's path relative to that ancestor. Both are empty when root holds .git
-# itself or no ancestor does.
+# The ignore files from the nearest ancestor holding .git down to root's
+# parent, and root's path below that ancestor.
 fun ancestors(root: ?String) -> (List[IgnoreFile], String)
   abs = absolute(root)
   stack: List[IgnoreFile] = List()
   return stack, String() if has_git(?abs)
-  # the parents of abs, nearest first, ending with the one holding .git
   chain: List[?String] = List()
   dir = ?abs[..]
   found = false
@@ -227,26 +209,22 @@ fun ancestors(root: ?String) -> (List[IgnoreFile], String)
   rel = String(below(base, ?abs))
   i = chain.len
   while i > 0
-    # the base first, then each directory down to root's parent
     i -= 1
     if read_ignore(chain[i], offset_below(below(base, chain[i]))) as f
       !stack.push(<f)
   return stack, rel
 
-# The directory holding `path`, an absolute path, or `none` at /.
 fun parent_of(path: ?String) -> (?String)? from path
   return none if path == "/"
   slash = text.find_last(path, "/") ?? return none
   return path[..1] if slash == 0
   path[..slash]
 
-# `path` relative to `base`, an ancestor of it or the same.
 fun below(base: ?String, path: ?String) -> ?String from path
   return path[path.len..] if path.len == base.len
   return path[1..] if base == "/"
   path[base.len + 1..]
 
-# Where an entry's path relative to the base continues after the directory at dir_rel.
 fun offset_below(dir_rel: ?String) -> Int
   return 0 if dir_rel.len == 0 or dir_rel == "."
   dir_rel.len + 1

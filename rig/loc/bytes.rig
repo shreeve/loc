@@ -1,5 +1,3 @@
-# The bytes the scanner, the matcher, and the flags name, as Trig names them.
-
 TAB: U8 = 0x09
 LINE_FEED: U8 = 0x0A
 VERTICAL_TAB: U8 = 0x0B
@@ -41,8 +39,7 @@ OPEN_BRACE: U8 = 0x7B
 CLOSE_BRACE: U8 = 0x7D
 TILDE: U8 = 0x7E
 
-# Whitespace for the blank rule is exactly these bytes (SPEC, Files); the
-# regex rule's previous bytes are SPEC's list (Scanner).
+# Exactly SPEC's bytes: whitespace for the blank rule, and the bytes before a regex.
 enum ByteSet
   whitespace
   regex_prev

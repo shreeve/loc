@@ -1,8 +1,6 @@
-# The language table from SPEC.md and the byte tables derived from it.
-
 use std.sort
 
-# The openers of code inside a string, each closed by its matching `}`.
+# Openers of code inside a string, each closed by its matching `}`.
 DOLLAR_OPENERS = ["${"]
 HASH_OPENERS = ["#{"]
 RIP_OPENERS = ["#{", "${"]
@@ -21,9 +19,7 @@ fun openers(i: Interp) -> []Static
     .rip => ?RIP_OPENERS[..]
     .php => ?PHP_OPENERS[..]
 
-# One way a language writes a string literal; char literals are a kind too.
-# `stop` holds the bytes that end the fast skip inside the string: the
-# closer's first byte, backslash, and each interpolation opener's first byte.
+# `stop` holds the bytes that end the fast skip inside the string.
 obj StrKind
   open: Static
   close: Static
@@ -59,31 +55,30 @@ RIP_REGEX_WORDS = [
 RUBY_REGEX_WORDS = ["if", "unless", "while", "until", "and", "or", "not", "then", "else", "elsif", "when", "case", "return", "yield", "raise"]
 
 enum Chars
-  always  # every ' outside a string or comment opens a char literal
-  rust    # ' opens one only before \ or when the byte after next is ': lifetimes have no closer
+  always
+  rust    # only before \ or a ' two bytes on: a lifetime has no closer
 
-# How a language spells a heredoc opener after <<.
 enum Heredoc
-  shell   # optional -, then spaces, then a word that may be quoted or start with \
-  ruby    # optional - or ~, then a word that may be quoted, with no space anywhere
-  php     # a third <, spaces, then a word that may be quoted; the terminator may be indented and followed by ; or ,
+  shell
+  ruby
+  php
 
-# An embedded language: the body between the delimiters is scanned by the language named.
+# An embedded language, scanned by the language named.
 enum Region
-  tag(name: Static, lang: Static)                     # <name …> opens after its >, </name> closes
-  between(open: Static, close: Static, lang: Static)  # open compared without regard to ASCII case
+  tag(name: Static, lang: Static)
+  between(open: Static, close: Static, lang: Static)
 
 # Extensions another language owns, taken for this one when test accepts a file's first line.
 obj Claim
   extensions: List[Static]
   test: fun(?String) -> Bool
 
-# A language as the scanner sees it. Empty lists, `none`, and false mean the syntax is absent.
+# Empty lists, `none`, and false mean the syntax is absent.
 obj Lang
   name: Static
   extensions: List[Static] = List()   # lower-case, dot included
-  names: List[Static] = List()        # whole file names recognized without an extension
-  shebangs: List[Static] = List()     # interpreters whose #! line recognizes an extensionless file
+  names: List[Static] = List()
+  shebangs: List[Static] = List()
   claim: Claim? = none
   line: List[Static] = List()         # line-comment openers; none shares a prefix with another
   hash_attribute: Bool = false        # `#[` begins an attribute, not a comment (PHP)
@@ -93,25 +88,23 @@ obj Lang
   block_at_line_start: Bool = false   # a block comment opens only as the first non-whitespace of a line (Rip)
   strings: List[StrKind] = List()
   chars: Chars? = none
-  regex: List[Static]? = none         # /…/ literals by the previous-byte-or-word rule, with the words
-  zig_line_string: Bool = false       # \\ to end of line
-  rust_raw: Bool = false              # r#*"…"#*, optional b prefix
+  regex: List[Static]? = none         # the words after which / opens a regex
+  zig_line_string: Bool = false
+  rust_raw: Bool = false
   heredoc: Heredoc? = none
   regions: List[Region] = List()
-  region_langs: List[Int] = List()    # the language index of each region, from `prepare`
+  region_langs: List[Int] = List()    # from `prepare`
   color: [3]U8 = [3 of 0]
-  starts: [256]Bool = [256 of false]  # bytes that can begin a token in normal state; any other byte is plain code
+  starts: [256]Bool = [256 of false]  # bytes that can begin a token; any other is plain code
 
-  # Whether --languages lists it: an entry no file can reach, such as an
-  # embedded-only language, is not a name the user can give.
+  # An entry no file can reach, such as `PHP code`, is no name a user gives.
   fun listed(?@) -> Bool
     @extensions.len > 0 or @names.len > 0 or @shebangs.len > 0 or @claim != none
 
-# The table and its lookups. Keys are lower-case where the lookup ignores
-# case, and `String` so that a lookup takes any `?String`.
+# Keys are `String`s so that a lookup takes any `?String`.
 pub obj Table
   langs: List[Lang]
-  char: StrKind                       # the char literal of Go, Rust, Zig, and their kin
+  char: StrKind                       # the char literal
   by_ext: Map[String, Int]
   by_claim: Map[String, Int]
   by_name: Map[String, Int]
@@ -119,23 +112,19 @@ pub obj Table
   binary_exts: Set[String]
   text_exts: Set[String]
 
-  # Language index by extension, dot included, already lower-cased.
+  # `lower` is lower-cased already, dot included.
   fun by_extension(?@, lower: ?String) -> Int?
     @by_ext.get(lower) ?? none
 
-  # The language that may take a file with this extension from its owner.
   fun claimant(?@, lower: ?String) -> Int?
     @by_claim.get(lower) ?? none
 
-  # Language index by whole file name, compared exactly.
   fun by_file_name(?@, name: ?String) -> Int?
     @by_name.get(name) ?? none
 
-  # Language index by the interpreter of a #! line, compared exactly.
   fun by_interpreter(?@, interpreter: ?String) -> Int?
     @by_shebang.get(interpreter) ?? none
 
-  # Language index by the name --languages prints, compared without regard to ASCII case.
   pub fun by_language(?@, name: ?String) -> Int?
     for l, i in ?@langs
       return i if l.listed() and same_ignoring_case(l.name, name)
@@ -150,7 +139,6 @@ fun same_ignoring_case(a: ?String, b: ?String) -> Bool
     return false if to_lower(a[i]) != to_lower(b[i])
   true
 
-# `s` lower-cased in ASCII, as every extension is compared.
 fun ascii_lower(s: ?String) -> String
   out = String()
   !out.reserve(s.len)
@@ -182,8 +170,6 @@ fun js_family(name: Static, extensions: List[Static], color: [3]U8) -> Lang
     color: color,
   )
 
-# Markup with <!-- --> comments, JavaScript inside <script> and CSS inside
-# <style>, and no string syntax of its own.
 fun markup(name: Static, extensions: List[Static], color: [3]U8) -> Lang
   Lang(
     name: name,
@@ -447,8 +433,7 @@ pub fun languages() -> Table
     Region.between(open: "<?=", close: "?>", lang: "PHP code"),
   ])
   !langs.push(<php)
-  # The rules inside PHP's <?php … ?> regions; never recognized by
-  # extension, so never a row of its own.
+  # The rules inside <?php … ?>, never a row of its own.
   !langs.push(Lang(
     name: "PHP code",
     line: List(["//", "#"]),
@@ -495,10 +480,8 @@ fun css_family(name: Static, extensions: List[Static], color: [3]U8) -> Lang
     color: color,
   )
 
-# A MUMPS routine's first line: a `;` comment from column zero, as
-# YottaDB's license banners are; or an optional label, `%` or a letter and
-# then letters and digits, with an optional formal list; then spaces or
-# tabs; then the `;` of a comment.
+# A MUMPS routine's first line: `;` at column zero, or an optional label
+# and formal list, then spaces or tabs, then `;`.
 fun mumps_routine(first: ?String) -> Bool
   return true if first.len > 0 and first[0] == SEMICOLON
   i = 0
@@ -516,9 +499,7 @@ fun mumps_routine(first: ?String) -> Bool
     i += 1
   i > label_end and i < first.len and first[i] == SEMICOLON
 
-# Extensions that are never text and common enough to be numerous in an
-# ordinary tree: a file with one is binary by its name alone, so it is never
-# opened. Anything rarer is left to the NUL check, which is exact.
+# Common enough to decide by name alone, so the file is never opened.
 pub BINARY_EXTENSIONS = [
   ".png", ".jpg", ".jpeg", ".gif", ".ico", ".webp", ".ttf", ".otf", ".woff", ".woff2", ".zip",
   ".gz", ".tgz", ".bz2", ".xz", ".zst", ".7z", ".jar", ".mp3", ".mp4", ".mov", ".wav", ".webm",
@@ -526,13 +507,9 @@ pub BINARY_EXTENSIONS = [
   ".pdf",
 ]
 
-# Extensions that are always text and common enough to be numerous in an
-# ordinary tree, the same test as above and with the same trade: a file with
-# one is skipped text by its name alone, sized without being opened.
 pub TEXT_EXTENSIONS = [".txt", ".rst", ".dts", ".dtsi", ".diff", ".s", ".map", ".svg", ".snap", ".lock"]
 
-# The scanner only ever tests a byte against these derived tables. Strings
-# go longest opener first, so `"""` is tried before `"`; the sort is
+# Strings go longest opener first, so `"""` is tried before `"`; the sort is
 # stable, so equal lengths keep table order.
 sub prepare(langs: !List[Lang])
   names: List[Static] = List()

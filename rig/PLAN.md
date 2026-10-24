@@ -28,8 +28,8 @@ byte for byte, styled output included, on every tree it was run on.
    lends rather than copies, optionals rather than sentinels, enums with
    payloads where Rust used tagged structs, several results where Rust
    returned tuples, `match` over bytes with named constants, and no
-   `raw` beyond the one `isatty` call. Comments are timeless and as
-   dense as the Rust's.
+   `raw` beyond the one `isatty` call. Comments say only what the
+   code cannot.
 2. **The expected documents are the authority.** A disagreement is a bug
    in the Rig code until an expected document is changed on purpose,
    and a change to one is a change to both implementations.
