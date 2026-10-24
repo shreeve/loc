@@ -1,3 +1,4 @@
+use std.math
 use std.sort
 use std.text
 use std.utf8
@@ -134,29 +135,27 @@ pub obj Report
     body = rows.len - 1
     g = grid(header_cells(prefix, ["Language", "Files", "Lines", "Blank", "Comment", "Code", "%"]), ?rows, false)
 
+    rule = g.rule()
     out = String()
     if styled and @total.code > 0
       !out.add(@bar(g.width()), "\n")
-    put_line(!out, styled, DIM, g.rule())
+    put_line(!out, styled, DIM, ?rule)
     put_line(!out, styled, BOLD, g.line(?g.headers))
-    put_line(!out, styled, DIM, g.rule())
+    put_line(!out, styled, DIM, ?rule)
     # With --by-file every language is a framed section.
     for cells, i in ?rows[..body]
       text_line = g.line(?cells)
       if colors[i] as c
         if @by_file and i > 0
-          put_line(!out, styled, DIM, g.rule())
-        if styled
-          !out.add(fg(c), DOT_GLYPH, RESET, " ", ?text_line[2..], "\n")
-        else
-          !out.add(text_line, "\n")
+          put_line(!out, styled, DIM, ?rule)
+        dot_line(!out, styled, c, ?text_line)
         if @by_file
-          put_line(!out, styled, DIM, g.rule())
+          put_line(!out, styled, DIM, ?rule)
       else
         !out.add(text_line, "\n")
-    put_line(!out, styled, DIM, g.rule())
+    put_line(!out, styled, DIM, ?rule)
     put_line(!out, styled, BOLD, g.line(?rows[body]))
-    put_line(!out, styled, DIM, g.rule())
+    put_line(!out, styled, DIM, ?rule)
     return out if @only_lang and @text.files == 0 and @binary.files == 0
     !out.add("\n")
 
@@ -168,7 +167,7 @@ pub obj Report
     ))
     labels = ?@text.labels
     if labels.len > 0
-      shown = labels.len if labels.len < SHOWN_LABELS else SHOWN_LABELS
+      shown = math.min(labels.len, SHOWN_LABELS)
       rows: List[List[String]] = List()
       for s in ?labels[..shown]
         !rows.push(skipped_row(+s.label, s.files, s.bytes, all_bytes))
@@ -180,16 +179,17 @@ pub obj Report
           rest_bytes += s.bytes
         !rows.push(skipped_row(String(with_commas(labels.len - SHOWN_LABELS), " more labels"), rest_files, rest_bytes, all_bytes))
       sg = grid(header_cells("", ["Skipped", "Files", "Size", "%"]), ?rows, false)
-      put_line(!out, styled, DIM, sg.rule())
+      rule = sg.rule()
+      put_line(!out, styled, DIM, ?rule)
       put_line(!out, styled, DIM, sg.line(?sg.headers))
-      put_line(!out, styled, DIM, sg.rule())
+      put_line(!out, styled, DIM, ?rule)
       for cells in ?rows
         put_line(!out, styled, DIM, sg.line(?cells))
-      put_line(!out, styled, DIM, sg.rule())
+      put_line(!out, styled, DIM, ?rule)
     if @binary.files > 0
       blabels = ?@binary.labels
       b = String(with_commas(@binary.files), " binary file", "" if @binary.files == 1 else "s", ", ", size(@binary.bytes), ": ")
-      shown = blabels.len if blabels.len < SHOWN_LABELS else SHOWN_LABELS
+      shown = math.min(blabels.len, SHOWN_LABELS)
       for s, k in ?blabels[..shown]
         !b.add(", ") if k > 0
         !b.add(s.label, " ", with_commas(s.files))
@@ -257,15 +257,16 @@ pub fun language_list(table: ?Table, styled: Bool) -> String
       !rows.push(<cells)
       !firsts.push(i if k == 0 else -1)
   g = grid(header_cells(prefix, ["Language", "Files"]), ?rows, true)
+  rule = g.rule()
   out = String()
-  put_line(!out, styled, DIM, g.rule())
+  put_line(!out, styled, DIM, ?rule)
   put_line(!out, styled, BOLD, String(text.trim_end(g.line(?g.headers))))
-  put_line(!out, styled, DIM, g.rule())
+  put_line(!out, styled, DIM, ?rule)
   for cells, k in ?rows
     t = g.line(?cells)
     shown = text.trim_end(?t)
-    if firsts[k] >= 0 and styled
-      !out.add(fg(table.langs[firsts[k]].color), DOT_GLYPH, RESET, " ", shown[2..], "\n")
+    if firsts[k] >= 0
+      dot_line(!out, styled, table.langs[firsts[k]].color, shown)
     else
       !out.add(shown, "\n")
   out
@@ -367,7 +368,7 @@ fun header_cells(prefix: Static, names: []Static) -> List[String]
     !out.push(String(prefix if i == 0 else "", name))
   out
 
-sub put_line(out: !String, styled: Bool, code: Static, s: String)
+sub put_line(out: !String, styled: Bool, code: Static, s: ?String)
   if styled
     !out.add(code, s, RESET, "\n")
   else
@@ -406,7 +407,7 @@ fun fg(c: [3]U8) -> String
 fun bg(c: [3]U8) -> String
   String("\x1b[48;2;", c[0], ";", c[1], ";", c[2], "m")
 
-# Widths are in characters, as Rust counts them.
+# Widths count runes, SPEC's characters.
 obj Grid
   headers: List[String]
   widths: List[Int]
@@ -448,3 +449,10 @@ fun grid(headers: List[String], rows: ?List[List[String]], left: Bool) -> Grid
 sub pad(out: !String, n: Int)
   for 0..n
     !out.push(SPACE)
+
+# A language's line: when styled, its dot in its color over the line's two-space prefix.
+sub dot_line(out: !String, styled: Bool, c: [3]U8, line: ?String)
+  if styled
+    !out.add(fg(c), DOT_GLYPH, RESET, " ", line[2..], "\n")
+  else
+    !out.add(line, "\n")
