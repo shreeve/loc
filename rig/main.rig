@@ -20,12 +20,15 @@ fun main() -> Int
       0
     .run(opts)
       readable = true
+      checked: List[loc.Root] = List()
       for root in opts.roots
-        loc.check_root(root) catch |e|
+        got = loc.check_root(root) catch |e|
           warn(String("loc: ", loc.lossy(root), ": ", loc.reason(?e)))
           readable = false
+          continue
+        !checked.push(<got)
       return 2 if not readable
-      sums = loc.count_trees(?table, ?opts) catch |e|
+      sums = loc.count_trees(?table, ?opts, <checked) catch |e|
         warn(String("loc: ", e))
         return 1
       report = loc.report(?table, <sums, opts.only_lang())

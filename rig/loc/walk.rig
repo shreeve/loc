@@ -110,12 +110,12 @@ obj Job
   path: String
   device: Bool = false
 
-pub fun count_trees(table: ?Table, opts: ?Options) -> Sums!
+pub fun count_trees(table: ?Table, opts: ?Options, checked: List[Root]) -> Sums!
   if opts.jobs as asked
     _ = task.workers(math.min(asked, MOST_WORKERS))  # before the first task, which starts the workers
   filter = lang_filter(table, opts)
   jobs = *Chan[Job](1024)
-  w = walk_roots(table, ?filter, opts, +jobs)&
+  w = walk_roots(table, ?filter, opts, <checked, +jobs)&
   ts = Tasks[Sums!]()
   for 0..COUNTERS
     !ts.add(counter(table, ?filter, +jobs, opts.by_file)&)
@@ -307,8 +307,8 @@ obj Patterns
   only: IgnoreFile?
 
 # With several roots, a file is sent once: links are never followed, so a
-# file has one key below its resolved root, and one walker lists them all.
-# With one root, up to `most` walker tasks list directories at once.
+# file has one key below its resolved root. Roots that may share a file
+# share one walker and its keys; any other root gets `most` walker tasks.
 obj Sender
   jobs: *Chan[Job]
   table: ?Table
@@ -348,23 +348,45 @@ fun dedup_key(root: ?String, resolved: ?String, path: ?String) -> String
     rest = rest[1..]
   String(resolved, "/", rest)
 
-sub walk_roots(table: ?Table, filter: ?LangFilter, opts: ?Options, jobs: *Chan[Job])!
+sub walk_roots(table: ?Table, filter: ?LangFilter, opts: ?Options, checked: List[Root], jobs: *Chan[Job])!
   defer !jobs.close()
-  several = opts.roots.len > 1
-  sender = Sender(jobs: +jobs, table: table, filter: filter, walkers: *Cell(1), most: 1 if several else WALKERS, seen: Set[String]() if several else none)
-  for root in opts.roots
-    sender.root = +root
-    sender.resolved = (file.realpath(root) catch none) ?? +root
-    walk(root, opts, !sender)!
+  found = <checked
+  resolved: List[String?] = List()
+  if opts.roots.len > 1
+    for root in opts.roots
+      !resolved.push(file.realpath(root) catch none)
+  shared = Sender(jobs: +jobs, table: table, filter: filter, walkers: *Cell(1), seen: Set[String]())
+  for root, i in opts.roots
+    c = swap(!found[i], Root(kind: .other))
+    if overlaps(?resolved, i)
+      shared.root = +root
+      shared.resolved = String(root)
+      if ?resolved[i] as r
+        shared.resolved = +r
+      walk(root, opts, <c, !shared)!
+    else
+      alone = Sender(jobs: +jobs, table: table, filter: filter, walkers: *Cell(1), most: WALKERS)
+      walk(root, opts, <c, !alone)!
 
-sub walk(root: ?String, opts: ?Options, sender: !Sender)!
-  is_dir = false
-  device = false
-  if (file.stat(root) catch none) as info
-    is_dir = info.kind == .directory
-    device = info.kind != .file
-  if not is_dir
-    !sender.send(Job(path: String(root), device: device))!
+# Whether root i may share a file with another: one resolved path holds
+# the other, or a root did not resolve.
+fun overlaps(resolved: ?List[String?], i: Int) -> Bool
+  for j in 0..resolved.len
+    if ?resolved[j] as theirs and ?resolved[i] as mine
+      return true if j != i and (within(mine, theirs) or within(theirs, mine))
+    else
+      return true
+  false
+
+# Whether `path` is `dir` or below it.
+fun within(dir: ?String, path: ?String) -> Bool
+  return false if not text.starts_with(path, dir)
+  path.len == dir.len or text.ends_with(dir, "/") or path[dir.len] == SLASH
+
+sub walk(root: ?String, opts: ?Options, checked: Root, sender: !Sender)!
+  c = <checked
+  if c.kind != .directory
+    !sender.send(Job(path: String(root), device: c.kind != .file))!
     return
   stack: List[IgnoreFile] = List()
   rel = String()
@@ -375,13 +397,13 @@ sub walk(root: ?String, opts: ?Options, sender: !Sender)!
     only: pattern_file(?opts.only, offset_below(?rel)) if opts.only.len > 0 else none,
   )
   above = Ignores(files: ?stack)
-  walk_dir(root, ?rel, ?above, ?pats, pats.only == none, opts.no_ignore, !sender)!
+  walk_dir(root, ?rel, ?above, ?pats, pats.only == none, opts.no_ignore, !sender, <c.entries)!
 
 # `rel` is below the ignore files' base; `selected` is whether --only chose
 # this directory or one above it. A subdirectory's task reads this frame's
 # ignore files in place, so the frame waits for its tasks before it ends.
-sub walk_dir(dir: ?String, rel: ?String, ignores: ?Ignores, pats: ?Patterns, selected: Bool, no_ignore: Bool, sender: !Sender)!
-  entries = list_dir(dir) ?? return
+sub walk_dir(dir: ?String, rel: ?String, ignores: ?Ignores, pats: ?Patterns, selected: Bool, no_ignore: Bool, sender: !Sender, listed: List[file.Entry]? = none)!
+  entries = <listed ?? list_dir(dir) ?? return
   mine: List[IgnoreFile] = List()
   # Only a listed .gitignore is read, saving a call in every other directory.
   if not no_ignore and lists_gitignore(?entries) and read_ignore(dir, offset_below(rel)) as f
@@ -432,10 +454,16 @@ fun join(dir: ?String, name: ?String) -> String
   return String(dir, name) if text.ends_with(dir, "/")
   String(dir, "/", name)
 
+# What `check_root` found of a PATH, so the walk asks no second time.
+pub obj Root
+  kind: file.Kind
+  entries: List[file.Entry]? = none  # a directory's listing
+
 # A PATH that cannot be read exits 2 here, not as a skipped file later.
-pub sub check_root(root: ?String)!
+pub fun check_root(root: ?String) -> Root!
   info = file.stat(root)! ?? return file.FileError.not_found
   if info.kind == .directory
-    _ = file.read_dir(root)! ?? return file.FileError.not_found
-  else
-    _ = file.open(root)! ?? return file.FileError.not_found
+    entries = file.read_dir(root)! ?? return file.FileError.not_found
+    return Root(kind: info.kind, entries: <entries)
+  _ = file.open(root)! ?? return file.FileError.not_found
+  Root(kind: info.kind)
