@@ -94,8 +94,8 @@ fun lang_filter(table: ?Table, opts: ?Options) -> LangFilter
 fun dropped_by_name(table: ?Table, filter: ?LangFilter, name: ?String) -> Bool
   ext = extension(name)
   lower = ascii_lower(ext ?? "")
-  lang = (table.by_extension(lower) if ext != none else none) ?? table.by_file_name(name) ?? return filter.only and (ext != none or not filter.shebangs)
-  ci = (table.claimant(lower) if ext != none else none) ?? return filter.excluded[lang]
+  lang = table.by_extension(lower) ?? table.by_file_name(name) ?? return filter.only and (ext != none or not filter.shebangs)
+  ci = table.claimant(lower) ?? return filter.excluded[lang]
   filter.excluded[lang] and filter.excluded[ci]
 
 # A device or FIFO PATH is read only up to the size it reports, as Rust's
@@ -144,7 +144,7 @@ fun load(table: ?Table, filter: ?LangFilter, path: ?String, device: Bool) -> Loa
   name = base_name(path)
   ext = extension(name)
   lower = ascii_lower(ext ?? "")
-  li: Int? = (table.by_extension(lower) if ext != none else none) ?? table.by_file_name(name)
+  li: Int? = table.by_extension(lower) ?? table.by_file_name(name)
   ready: String? = none  # the whole file, when its head was read whole
   if li == none and filter.only
     return .dropped if ext != none or not filter.shebangs
@@ -152,35 +152,33 @@ fun load(table: ?Table, filter: ?LangFilter, path: ?String, device: Bool) -> Loa
     return .dropped if has_nul(head.bytes)
     li = interpreter_lang(table, head.bytes)
     return .dropped if li == none
-    ready = take_whole(!head)
-  if li == none and ext != none and table.binary_exts.has(lower)
+    ready = <head.bytes if head.whole else none
+  if li == none and table.binary_exts.has(lower)
     return .binary(label: lossy(lower), bytes: size_on_disk(path))
-  if li == none and ext != none and table.text_exts.has(lower)
+  if li == none and table.text_exts.has(lower)
     return .text(label: lossy(lower), bytes: size_on_disk(path))
   if li == none
     head = read_head(path, device) catch |e| return unreadable(path, e)
     return .binary(label: label_of(name, ext, lower), bytes: head.size) if has_nul(head.bytes)
     li = interpreter_lang(table, head.bytes) if ext == none
     return .text(label: label_of(name, ext, lower), bytes: head.size) if li == none
-    ready = take_whole(!head)
+    ready = <head.bytes if head.whole else none
   lang = li ?? return .dropped
   excluded = ?filter.excluded
-  claimant = table.claimant(lower) if ext != none else none
-  decided = false  # whether the claimant's test has run
+  claimant = table.claimant(lower)
   if claimant as ci and excluded[lang] != excluded[ci]
     # One of the two is excluded, so the first line decides.
     if ready == none
       head = read_head(path, device) catch |e| return unreadable(path, e)
       lang = ci if claims(table, ci, head.bytes)
-      ready = take_whole(!head)
+      ready = <head.bytes if head.whole else none
     else if ?ready as whole
       lang = ci if claims(table, ci, whole)
     return .dropped if excluded[lang]
-    decided = true
   else if excluded[lang]
     return .dropped  # with a claimant, both are excluded
   buf = <ready ?? (read_whole(path, device) catch |e| return unreadable(path, e))
-  if not decided and claimant as ci and claims(table, ci, buf)
+  if claimant as ci and claims(table, ci, buf)  # the head's first line, so a second test agrees
     lang = ci
   return .binary(label: label_of(name, ext, lower), bytes: buf.len) if has_nul(buf)
   .counted(lang: lang, buf: <buf)
@@ -209,10 +207,6 @@ fun read_head(path: ?String, device: Bool) -> Head!
     want = NUL_WINDOW - buf.len
     break if (!f).read(!buf, want)! == 0
   Head(bytes: <buf, size: info.size, whole: false)
-
-fun take_whole(head: !Head) -> String?
-  return none if not head.whole
-  swap(!head.bytes, String())
 
 fun read_whole(path: ?String, device: Bool) -> String!
   if not device
@@ -308,7 +302,6 @@ obj Sender
   jobs: *Chan[Job]
   asks: *Chan[Int]
   asked: *Cell[Int]    # counters asked for, by every sender
-  full: Bool = false   # COUNTERS asked, so `asked` is left alone
   table: ?Table
   filter: ?LangFilter
   walkers: *Cell[Int]  # walker tasks listing, not waiting for their own
@@ -321,11 +314,8 @@ obj Sender
     if !@seen as seen
       return if not (!seen).add(dedup_key(@root, @resolved, job.path))
     !@jobs.send(<job)!
-    return if @full
-    if (!@asked).add(1) <= COUNTERS
+    if @asked.get() < COUNTERS and (!@asked).add(1) <= COUNTERS
       !@asks.send(1)!
-    else
-      @full = true
 
   # Whether a directory gets a walker task of its own.
   fun spawns(!@) -> Bool
@@ -334,7 +324,7 @@ obj Sender
     false
 
   fun kid(?@) -> Sender
-    Sender(jobs: +@jobs, asks: +@asks, asked: +@asked, full: @full, table: @table, filter: @filter, walkers: +@walkers, most: @most)
+    Sender(jobs: +@jobs, asks: +@asks, asked: +@asked, table: @table, filter: @filter, walkers: +@walkers, most: @most)
 
   # A walker waiting for its own tasks leaves its turn to another.
   sub rests(!@)
@@ -355,14 +345,13 @@ sub walk_roots(table: ?Table, filter: ?LangFilter, opts: ?Options, checked: List
   defer !jobs.close()
   defer !asks.close()
   asked = *Cell(0)
-  found = <checked
   resolved: List[String?] = List()
   if opts.roots.len > 1
     for root in opts.roots
       !resolved.push(file.realpath(root) catch none)
   shared = Sender(jobs: +jobs, asks: +asks, asked: +asked, table: table, filter: filter, walkers: *Cell(1), seen: Set[String]())
   sharing = overlapping(resolved)
-  for c, i in <found
+  for c, i in <checked
     root = ?opts.roots[i]
     if sharing.len > 0 and sharing[i]
       shared.root = +root
@@ -412,46 +401,51 @@ sub walk(root: ?String, opts: ?Options, checked: Root, sender: !Sender)!
     exclude: pattern_file(opts.excludes, offset_below(rel)) if opts.excludes.len > 0 else none,
     only: pattern_file(opts.only, offset_below(rel)) if opts.only.len > 0 else none,
   )
+  cx = Walk(pats: ?pats, no_ignore: opts.no_ignore)
   above = Ignores(files: ?stack)
-  walk_dir(root, rel, above, pats, pats.only == none, opts.no_ignore, !sender, <c.entries)!
+  walk_dir(root, rel, above, pats.only == none, cx, !sender, <c.entries)!
+
+# What every directory of one walk reads.
+obj Walk
+  pats: ?Patterns
+  no_ignore: Bool
 
 # `rel` is below the ignore files' base; `selected` is whether --only chose
 # this directory or one above it. A subdirectory's task reads this frame's
 # ignore files in place, so the frame waits for its tasks before it ends.
-sub walk_dir(dir: ?String, rel: ?String, ignores: ?Ignores, pats: ?Patterns, selected: Bool, no_ignore: Bool, sender: !Sender, listed: List[file.Entry]? = none)!
+sub walk_dir(dir: ?String, rel: ?String, ignores: ?Ignores, selected: Bool, cx: ?Walk, sender: !Sender, listed: List[file.Entry]? = none)!
   entries = <listed ?? list_dir(dir) ?? return
   mine: List[IgnoreFile] = List()
   # Only a listed .gitignore is read, saving a call in every other directory.
-  if not no_ignore and lists_gitignore(entries) and read_ignore(dir, offset_below(rel)) as f
+  if not cx.no_ignore and lists_gitignore(entries) and read_ignore(dir, offset_below(rel)) as f
     !mine.push(<f)
   here = Ignores(files: ?mine, up: ignores)
-  kids = Tasks[Bool!]()
+  kids = Tasks[Void!]()
   spawned = false
   for e in ?entries
     continue if e.name == ".git" or e.link or e.kind == .other
     is_dir = e.kind == .directory
     child_rel = String(rel, "/", e.name) if rel.len > 0 else +e.name
-    continue if ignored(pats.exclude, here, child_rel, e.name, is_dir)
+    continue if ignored(cx.pats.exclude, here, child_rel, e.name, is_dir)
     chosen = selected
-    if not chosen and ?pats.only as only
+    if not chosen and ?cx.pats.only as only
       chosen = selects(only, child_rel, e.name, is_dir)
     if is_dir and (!sender).spawns()
-      !kids.add(walk_task(join(dir, ?e.name), <child_rel, ?here, pats, chosen, no_ignore, sender.kid())&)
+      !kids.add(walk_task(join(dir, ?e.name), <child_rel, ?here, chosen, cx, sender.kid())&)
       spawned = true
     else if is_dir
-      walk_dir(join(dir, e.name), child_rel, here, pats, chosen, no_ignore, !sender)!
+      walk_dir(join(dir, e.name), child_rel, here, chosen, cx, !sender)!
     else if chosen and not (sender.filter.by_name and dropped_by_name(sender.table, sender.filter, e.name))
       !sender.send(Job(path: join(dir, e.name)))!
   return if not spawned
   !sender.rests()
-  _ = (>kids)!
+  (>kids)!
   !sender.resumes()
 
-fun walk_task(dir: String, rel: String, ignores: ?Ignores, pats: ?Patterns, selected: Bool, no_ignore: Bool, sender: Sender) -> Bool!
+sub walk_task(dir: String, rel: String, ignores: ?Ignores, selected: Bool, cx: ?Walk, sender: Sender)!
   s = <sender
-  walk_dir(dir, rel, ignores, pats, selected, no_ignore, !s)!
+  walk_dir(dir, rel, ignores, selected, cx, !s)!
   !s.rests()
-  true
 
 fun list_dir(dir: ?String) -> List[file.Entry]?
   got = file.read_dir(dir) catch |e|
