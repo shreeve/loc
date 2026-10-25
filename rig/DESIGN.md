@@ -92,18 +92,29 @@ row sorts by its own key, so no order can change the output.
   directory's own, then a view of its parent's, so a subdirectory's task
   reads them in place, and each frame waits for its tasks before it ends.
   On trig, walk-only: 290 ms with one walker, 142 with 4, 120 with 16,
-  against Rust's 190. With several roots one walker lists them all,
-  since the dedup set is one task's.
+  against Rust's 190. Among several roots, those whose resolved paths
+  nest share one walker and the dedup set, which is one task's (all of
+  them, when any root does not resolve); every
+  other root gets the walker tasks, since two roots that do not nest
+  share no file (8 trig subdirectories: 1,731 ms with one walker, 1,348
+  with the tasks, against Rust's 1,954).
 - **No read cap of loco's own.** The pool keeps the file calls in flight
   near the performance cores, which is where the kernel stops gaining
   from more. A token channel on top of it only made reads wait:
   `~/Data/Code/rig` took 185 ms with 6 tokens and 143 ms without.
-- **2N counters with `--jobs N`, 64 without.** `--jobs N` is `N` workers
-  (capped at 64) and `2N` counting tasks: with one task per worker each
-  worker sleeps through every pool call, and two overlap one file's I/O
-  with another's scan (`--jobs=1`: 2,910 ms against Rust's 3,376).
-  Without `--jobs` the runtime keeps a worker per core and 64 counting
-  tasks run; std gives no core count to ask.
+- **Up to 64 counting tasks, started on demand.** The walker asks for a
+  counter with each of the first 64 files it sends (a shared `*Cell[Int]`
+  keeps the count), so an empty tree starts none and a small one few:
+  the empty directory took 7.4 ms when all 64 started at once, 5.8
+  after. Each counter waits out its own file calls, so `--jobs N` sets
+  `N` workers (capped at 64) and not the counters: with `2N` of them,
+  `--jobs=1` had two files in flight (3,019 ms against 2,015 with 64;
+  Rust 3,250).
+- **The walk starts from `check_root`'s listing.** `check_root` stats
+  each PATH and lists a directory or opens a file, to exit 2 before any
+  output, and hands what it
+  found to the walk, which neither stats nor lists it again; `realpath`
+  runs only with several PATHs (`~/Data/Code/rig`: 168 ms to 135).
 - **The walk** skips `.git`, links (tested first, since `read_dir`
   follows links for `kind`), and other kinds (device, FIFO, broken
   link). A directory that cannot be listed is a `cannot read` warning
@@ -164,22 +175,26 @@ corpus with identical counts: Rust 243 ms, Rig 196 ms. `--release=fast`
 gains nothing, so the program builds with `--release` (safe); the rest of
 the gap is I/O and concurrency.
 
-On `~/Data/Code/trig` with no ignore rules (125,268 files), on Trig with
-them, and on smaller trees. Interleaved runs, fastest of five, three
-rounds, on a 10-core machine (4 performance cores) at load 7 to 15:
+On `~/Data/Code/trig` with no ignore rules (125,268 files), on Trig and
+Rig with their ignore rules, and on small trees. Interleaved runs, fastest
+of seven, on a 10-core machine (4 performance cores) at load 7 to 15:
 
 | Run | Rust | Rig | Ratio |
 |---|---|---|---|
-| `--no-ignore --json ~/Data/Code/trig` | 1,898 / 2,085 / 1,933 ms | 1,487 / 1,406 / 1,614 ms | 0.67–0.84x |
-| the same, `--jobs=1` | 3,326 / 3,527 / 3,311 ms | 3,108 / 3,495 / 3,325 ms | 0.93–1.00x |
-| `--no-ignore --json -l python ~/Data/Code/trig` | 225 / 237 / 247 ms | 133 / 156 / 166 ms | 0.59–0.67x |
-| `--no-ignore --json -o zzznomatch ~/Data/Code/trig` (the walk) | 197 / 220 / 219 ms | 121 / 154 / 149 ms | 0.61–0.70x |
-| `--json ~/Data/Code/trig` | 23.3 / 30.9 / 25.1 ms | 25.6 / 33.2 / 28.0 ms | 1.07–1.11x |
-| `--json ~/Data/Code/rig` | 145 / 153 / 158 ms | 146 / 173 / 176 ms | 1.01–1.13x |
-| `~/Data/Code/trig/src` | 10.8 / 17.3 / 11.0 ms | 15.1 / 22.0 / 15.7 ms | 1.3–1.4x |
+| `--no-ignore --json ~/Data/Code/trig` | 1,837 ms | 1,417 ms | 0.77x |
+| the same, `--jobs=1` | 3,367 ms | 1,952 ms | 0.58x |
+| `--no-ignore --json -l python ~/Data/Code/trig` | 214 ms | 123 ms | 0.58x |
+| `--no-ignore --json -o zzznomatch ~/Data/Code/trig` (the walk) | 191 ms | 120 ms | 0.63x |
+| `--json ~/Data/Code/trig` | 23.5 ms | 24.6 ms | 1.05x |
+| `--json ~/Data/Code/rig` | 141 ms | 139 ms | 0.98x |
+| `~/Data/Code/trig/src` (304 files, 13.8 MB) | 10.7 ms | 13.6 ms | 1.27x |
+| `--json .` of this repository | 7.7 ms | 10.1 ms | 1.31x |
+| `--json` of an empty directory | 5.5 ms | 6.2 ms | 1.13x |
+| 20,000 files given as PATHs | 666 ms | 1,112 ms | 1.67x |
 
-A small tree pays about 4 ms more than Rust, most of it starting the
-scheduler's workers.
+A small tree pays about 2 ms more than Rust: starting every worker, and
+a pool hop for each file call. Each PATH costs a few serial pool calls
+(`stat`, `open`, `realpath`) before the walk.
 
 ## Where the two implementations differ
 
@@ -211,11 +226,18 @@ Measured here; none blocks loco.
   a hop per file cost 42% on one thread. A worker with nothing else to
   run could make a regular-file call itself (approved for Rig, not yet
   built); loco's walker tasks only overlap the hops.
-- No open-only readability check exists, so `check_root` lists a
-  directory.
+- The blocking pool's lock spins without backing off and reads the clock
+  while held: under load it is the top frame of a `--jobs=1` profile
+  (62% of the worker's time), and a private patch cut a large walk's
+  user time from 14.9 s to 1.4 s at the same wall time.
+- The allocator keeps a freed large block only for an allocation of
+  exactly its size, so each file read whole of a new size faults in
+  fresh pages: 24,600 page reclaims against Rust's 3,000 on 9,000 files
+  (Rust reuses one buffer per reader).
 - An error mid-listing fails the whole `read_dir`; Rust skips the entry.
 - A closed stdout gives the error reason "Unexpected".
-- Starting the workers costs about 2 ms; `par.map` with `limit: 1`
-  starts every worker.
+- Starting every worker at the first task costs about 0.6 ms. With a hop
+  per file call, it is most of the 2 ms loco pays over Rust on
+  `trig/src`'s 304 files.
 - `task.workers(n)` caps at 64 without saying so.
 - `std.text` has no Unicode `to_lower`.
