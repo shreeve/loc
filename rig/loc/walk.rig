@@ -115,9 +115,12 @@ pub fun count_trees(table: ?Table, opts: ?Options, checked: List[Root]) -> Sums!
     _ = task.workers(math.min(asked, MOST_WORKERS))  # before the first task, which starts the workers
   filter = lang_filter(table, opts)
   jobs = *Chan[Job](1024)
-  w = walk_roots(table, ?filter, opts, <checked, +jobs)&
+  # A counter starts as each of the first COUNTERS files is sent, so a small
+  # tree starts few and an empty one none.
+  asks = *Chan[Int](COUNTERS)
+  w = walk_roots(table, ?filter, opts, <checked, +jobs, +asks)&
   ts = Tasks[Sums!]()
-  for 0..COUNTERS
+  while (!asks).recv()! != none
     !ts.add(counter(table, ?filter, +jobs, opts.by_file)&)
   done = (>ts)!
   >w!
@@ -311,6 +314,9 @@ obj Patterns
 # share one walker and its keys; any other root gets `most` walker tasks.
 obj Sender
   jobs: *Chan[Job]
+  asks: *Chan[Int]
+  asked: *Cell[Int]    # counters asked for, by every sender
+  full: Bool = false   # COUNTERS asked, so `asked` is left alone
   table: ?Table
   filter: ?LangFilter
   walkers: *Cell[Int]  # walker tasks listing, not waiting for their own
@@ -323,6 +329,11 @@ obj Sender
     if !@seen as seen
       return if not (!seen).add(dedup_key(?@root, ?@resolved, ?job.path))
     !@jobs.send(<job)!
+    return if @full
+    if (!@asked).add(1) <= COUNTERS
+      !@asks.send(1)!
+    else
+      @full = true
 
   # Whether a directory gets a walker task of its own.
   fun spawns(!@) -> Bool
@@ -331,7 +342,7 @@ obj Sender
     false
 
   fun kid(?@) -> Sender
-    Sender(jobs: +@jobs, table: @table, filter: @filter, walkers: +@walkers, most: @most)
+    Sender(jobs: +@jobs, asks: +@asks, asked: +@asked, full: @full, table: @table, filter: @filter, walkers: +@walkers, most: @most)
 
   # A walker waiting for its own tasks leaves its turn to another.
   sub rests(!@)
@@ -348,14 +359,16 @@ fun dedup_key(root: ?String, resolved: ?String, path: ?String) -> String
     rest = rest[1..]
   String(resolved, "/", rest)
 
-sub walk_roots(table: ?Table, filter: ?LangFilter, opts: ?Options, checked: List[Root], jobs: *Chan[Job])!
+sub walk_roots(table: ?Table, filter: ?LangFilter, opts: ?Options, checked: List[Root], jobs: *Chan[Job], asks: *Chan[Int])!
   defer !jobs.close()
+  defer !asks.close()
+  asked = *Cell(0)
   found = <checked
   resolved: List[String?] = List()
   if opts.roots.len > 1
     for root in opts.roots
       !resolved.push(file.realpath(root) catch none)
-  shared = Sender(jobs: +jobs, table: table, filter: filter, walkers: *Cell(1), seen: Set[String]())
+  shared = Sender(jobs: +jobs, asks: +asks, asked: +asked, table: table, filter: filter, walkers: *Cell(1), seen: Set[String]())
   for root, i in opts.roots
     c = swap(!found[i], Root(kind: .other))
     if overlaps(?resolved, i)
@@ -365,7 +378,7 @@ sub walk_roots(table: ?Table, filter: ?LangFilter, opts: ?Options, checked: List
         shared.resolved = +r
       walk(root, opts, <c, !shared)!
     else
-      alone = Sender(jobs: +jobs, table: table, filter: filter, walkers: *Cell(1), most: WALKERS)
+      alone = Sender(jobs: +jobs, asks: +asks, asked: +asked, table: table, filter: filter, walkers: *Cell(1), most: WALKERS)
       walk(root, opts, <c, !alone)!
 
 # Whether root i may share a file with another: one resolved path holds
