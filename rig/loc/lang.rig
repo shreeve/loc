@@ -96,6 +96,7 @@ obj Lang
   heredoc: Heredoc? = none
   regions: List[Region] = List()
   region_langs: List[Int] = List()    # from `prepare`
+  region_stops: List[[256]Bool] = List()  # from `prepare`: the region language's starts and the closer's first byte
   color: [3]U8 = [3 of 0]
   starts: [256]Bool = [256 of false]  # bytes that can begin a token; any other is plain code
 
@@ -534,6 +535,11 @@ sub prepare(langs: !List[Lang])
       l.starts[U8('b')] = true
     if l.heredoc != none or l.regions.len > 0
       l.starts[U8('<')] = true
+  for i in 0..langs.len
+    for ri in 0..langs[i].regions.len
+      stops = langs[langs[i].region_langs[ri]].starts
+      stops[closer_first(langs[i].regions[ri])] = true
+      !langs[i].region_stops.push(stops)
 
 fun indexed(langs: List[Lang]) -> Table
   t = Table(langs: <langs, char: sq())
@@ -552,3 +558,8 @@ fun indexed(langs: List[Lang]) -> Table
   for e in TEXT_EXTENSIONS
     _ = (!t.text_exts).add(String(e))
   t
+
+fun closer_first(r: ?Region) -> U8
+  match r
+    .tag(_, _) => '<'
+    .between(_, close, _) => close[0]

@@ -43,13 +43,15 @@ enum Class
 obj Scanner
   table: ?Table
   buf: ?String
-  outer: Int               # the file's language, kept while a region switches `lang`
-  lang: Int
+  outer: ?Lang             # the file's language, kept while a region switches `lang`
+  lang: ?Lang
   block_depth: Int = 0
   open: Open? = none
   nests: List[Nest, inline: 4] = List()
   heredoc: OpenHeredoc? = none
   region: Int? = none      # the open region, in the outer language's regions
+  closer: U8? = none       # its closer's first byte
+  stops: ?[256]Bool        # the bytes that end the fast skip: `lang.starts`, and in a region its closer
   pending: Int? = none     # a region whose tag's > has not been seen yet
 
   fun line(!@, pos: Int, end: Int) -> Class
@@ -72,7 +74,7 @@ obj Scanner
     code = @open != none
     i = pos
 
-    if @open == none and @table.langs[@lang].zig_line_string
+    if @open == none and @lang.zig_line_string
       j = pos
       while j < end and WHITESPACE[buf[j]]
         j += 1
@@ -81,7 +83,7 @@ obj Scanner
         i = end
 
     while i < end
-      l = ?@table.langs[@lang]
+      l = @lang
       if @open as open
         code = true
         k = match open
@@ -135,26 +137,27 @@ obj Scanner
         if text.find_any[">"](buf[..end], i) as k
           i = k + 1
           @region = ri
-          @lang = l.region_langs[ri]
+          @closer = '<'
+          @stops = ?l.region_stops[ri]
+          @lang = ?@table.langs[l.region_langs[ri]]
           @pending = none
         else
           i = end
         continue
 
       b = buf[i]
-      # inside a region, the closer's first byte also ends the fast skip
-      closer: U8? = none
-      if @region as ri
-        closer = closer_first(@table.langs[@outer].regions[ri])
-      if not l.starts[b] and closer != b
+      stops = @stops
+      if not stops[b]
         code = true
         i += 1
-        while i < end and not l.starts[buf[i]] and closer != buf[i]
+        while i < end and not stops[buf[i]]
           i += 1
         continue
-      if closer == b and @region as ri and closes_region(buf, i, end, @table.langs[@outer].regions[ri]) as after
+      if @closer == b and @region as ri and closes_region(buf, i, end, ?@outer.regions[ri]) as after
         @lang = @outer
         @region = none
+        @closer = none
+        @stops = ?@outer.starts
         i = after
         code = true
         continue
@@ -163,9 +166,11 @@ obj Scanner
           @outer = @lang
           match l.regions[ri]
             .tag(_, _) => @pending = ri
-            .between(_, _, _)
+            .between(_, close, _)
               @region = ri
-              @lang = l.region_langs[ri]
+              @closer = close[0]
+              @stops = ?l.region_stops[ri]
+              @lang = ?@table.langs[l.region_langs[ri]]
           code = true
           i = after
           continue
@@ -222,12 +227,12 @@ obj Scanner
 
   fun spans_lines(?@, open: Open) -> Bool
     match open
-      .kind(ki) => @table.langs[@lang].strings[ki].multiline
+      .kind(ki) => @lang.strings[ki].multiline
       .char => false
       .rust_raw(_) => true
 
 fun scan(table: ?Table, lang: Int, buf: ?String) -> Counts
-  s = Scanner(table: table, buf: buf, outer: lang, lang: lang)
+  s = Scanner(table: table, buf: buf, outer: ?table.langs[lang], lang: ?table.langs[lang], stops: ?table.langs[lang].starts)
   counts = Counts()
   pos = BOM.len if text.starts_with(buf, BOM) else 0
   while pos < buf.len
@@ -308,11 +313,6 @@ fun opens_region(buf: ?String, i: Int, end: Int, l: ?Lang) -> (Int, Int)?
         if starts_with_ci(buf, i, end, open)
           return ri, i + open.len
   none
-
-fun closer_first(r: ?Region) -> U8
-  match r
-    .tag(_, _) => '<'
-    .between(_, close, _) => close[0]
 
 # Where the region's closer ends; a tag with no `>` on the line closes at its end.
 fun closes_region(buf: ?String, i: Int, end: Int, r: ?Region) -> Int?
