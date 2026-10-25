@@ -1,0 +1,106 @@
+#!/usr/bin/env bash
+# rig/tools/light: loco's light gate for a Rig under test. It builds loco
+# with that Rig, runs the unit tests and rig/test.sh's checks, and
+# compares loco's stdout and exit code with the Rust loc's on each tree
+# and flag set below, then says GREEN or RED with what failed. Timing is
+# not part of the gate.
+#
+#   rig/tools/light RIG=/path/to/bin/rig    or    RIG=/path/to/bin/rig rig/tools/light
+#
+# LIGHT_TREES (space-separated) replaces the trees outside this repository,
+# which are ~/Data/Code/trig and ~/Data/Code/rig when present.
+set -u
+for a in "$@"; do
+  case $a in
+    RIG=*) RIG=${a#RIG=} ;;
+    *) echo "usage: rig/tools/light RIG=/path/to/bin/rig" >&2; exit 2 ;;
+  esac
+done
+[ -n "${RIG:-}" ] && [ -x "$RIG" ] || { echo "usage: rig/tools/light RIG=/path/to/bin/rig" >&2; exit 2; }
+cd "$(dirname "$0")/../.."
+work=$(mktemp -d "${TMPDIR:-/tmp}/loco-light.XXXXXX")
+trap 'rm -rf "$work"' EXIT
+start=$(date +%s)
+failed=()
+
+# Runs one job, ticked with its time, or marked with its last lines kept.
+job() {
+  local label=$1; shift
+  local t0=$(date +%s)
+  if "$@" >"$work/job.log" 2>&1; then
+    printf '  [x] %-36s %4d s  %s\n' "$label" $(( $(date +%s) - t0 )) "$(tail -1 "$work/job.log")"
+  else
+    printf '  [!] %-36s %4d s\n' "$label" $(( $(date +%s) - t0 ))
+    failed+=("$label: $(tail -4 "$work/job.log" | tr '\n' ' ')")
+  fi
+}
+
+rust_loc() {
+  [ -x target/release/loc ] || cargo build --release -q
+}
+
+checks() {
+  LOC=$work/loco rig/test.sh >"$work/checks.log" 2>&1
+  local rc=$?
+  grep -E '^FAIL|passed' "$work/checks.log"
+  return $rc
+}
+
+# Whether loco and the Rust loc print the same stdout and exit the same way.
+same() {
+  local want got
+  want=$(eval "target/release/loc $1" 2>/dev/null; echo "exit $?")
+  got=$(eval "\"\$work/loco\" $1" 2>/dev/null; echo "exit $?")
+  [ "$want" = "$got" ] && return 0
+  echo "differs: loc $1"
+  return 1
+}
+
+# Each tree with each flag set, and the several-PATH cases, each twice:
+# walker and counter tasks run in no fixed order.
+compare() {
+  local trees="fixtures/cases fixtures ." t f roots bad=0 n=0
+  if [ -n "${LIGHT_TREES:-}" ]; then
+    trees="$trees $LIGHT_TREES"
+  else
+    for t in "$HOME/Data/Code/trig" "$HOME/Data/Code/rig"; do [ -d "$t" ] && trees="$trees $t"; done
+  fi
+  local flags=("--json -f" "--no-ignore --json -f" "" "-f --no-color" "-l python --json" "-x rust --json" "-e '*.md' --json" "-o src --json -f" "--jobs 1 --json -f")
+  for t in $trees; do
+    for f in "${flags[@]}"; do
+      for k in 1 2; do n=$((n + 1)); same "$f $t" || bad=$((bad + 1)); done
+    done
+  done
+  while IFS= read -r roots; do
+    for f in "--json -f" "--no-ignore -f"; do
+      for k in 1 2; do n=$((n + 1)); same "$f $roots" || bad=$((bad + 1)); done
+    done
+  done <<EOF
+rig rig/loc
+rig/loc rig ./rig/
+rig rig
+rig/main.rig rig
+rig/main.rig rig/main.rig
+fixtures fixtures/cases fixtures/expected
+rig src tests
+./rig rig/ rig/.
+EOF
+  echo "$n runs, $bad differ"
+  [ $bad -eq 0 ]
+}
+
+echo "light gate: loco with $RIG ($("$RIG" --version 2>/dev/null))"
+job "build loco (--release)" "$RIG" build --release -o "$work/loco" rig/main.rig
+job "build the Rust loc" rust_loc
+if [ -x "$work/loco" ] && [ -x target/release/loc ]; then
+  job "unit tests (rig test rig/loc)" "$RIG" test rig/loc
+  job "checks (rig/test.sh)" checks
+  job "byte comparison with the Rust loc" compare
+fi
+for f in "${failed[@]+"${failed[@]}"}"; do echo "  $f"; done
+if [ ${#failed[@]} -eq 0 ] && [ -x "$work/loco" ]; then
+  echo "light gate: GREEN in $(( $(date +%s) - start )) s"
+  exit 0
+fi
+echo "light gate: RED in $(( $(date +%s) - start )) s"
+exit 1

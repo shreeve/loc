@@ -60,6 +60,10 @@ rig/build.sh && rig/test.sh && rig test rig/loc
 - `LOC=target/release/loc rig/test.sh` runs the same checks on the Rust
   loc. It fails exactly the last two, which the comment in `test.sh`
   names: a `.gitignore` line of only spaces, and a linked PATH's size.
+- `rig/tools/light RIG=/path/to/bin/rig` is the light gate a Rig change
+  runs: it builds loco with that Rig, runs both suites above, and compares
+  loco's output and exit code with the Rust loc's on 122 tree and flag runs,
+  then says GREEN or RED. Timing is not part of it.
 
 ## Decisions the code cannot explain
 
