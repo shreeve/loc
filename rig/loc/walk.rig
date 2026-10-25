@@ -10,7 +10,7 @@ use std.text
 NUL_WINDOW = 8192     # a file is binary if a NUL byte appears this early
 SMALL = 65536         # read whole to look at its head, in one call
 MOST_WORKERS = 64     # task.workers' cap
-COUNTERS = 64         # counting tasks without --jobs
+COUNTERS = 64         # counting tasks; each waits out its file calls, so --jobs sets workers, not reads
 WALKERS = 16          # walker tasks listing directories at once, overlapping their calls
 
 obj Skipped
@@ -111,16 +111,13 @@ obj Job
   device: Bool = false
 
 pub fun count_trees(table: ?Table, opts: ?Options) -> Sums!
-  counters = COUNTERS
   if opts.jobs as asked
-    n = math.min(asked, MOST_WORKERS)
-    _ = task.workers(n)  # before the first task, which starts the workers
-    counters = 2 * n     # one file's reads overlap another's scan
+    _ = task.workers(math.min(asked, MOST_WORKERS))  # before the first task, which starts the workers
   filter = lang_filter(table, opts)
   jobs = *Chan[Job](1024)
   w = walk_roots(table, ?filter, opts, +jobs)&
   ts = Tasks[Sums!]()
-  for 0..counters
+  for 0..COUNTERS
     !ts.add(counter(table, ?filter, +jobs, opts.by_file)&)
   done = (>ts)!
   >w!
