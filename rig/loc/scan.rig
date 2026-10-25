@@ -96,13 +96,14 @@ obj Scanner
               @open = none
               i += hashes
             continue
-        while i < end and not k.stop[buf[i]]
-          i += 1
-        break if i >= end
-        b = buf[i]
-        if k.escape and b == BACKSLASH
+        # Escapes stay in this loop: a long literal is mostly runs and escapes.
+        while true
+          while i < end and not k.stop[buf[i]]
+            i += 1
+          break if i >= end or not (k.escape and buf[i] == BACKSLASH)
           i += 2
-        else if open as .kind(ki) and interp_opener(k, buf, i, end) as n
+        break if i >= end
+        if open as .kind(ki) and interp_opener(k, buf, i, end) as n
           !@nests.push(Nest(kind: ki, depth: 0))
           @open = none
           i += n
