@@ -11,7 +11,9 @@ and Zig 0.17.0.
 
 1. **Clean, fast, idiomatic Rig.** Sigils where effects happen, lends
    rather than copies, optionals rather than sentinels, enums with
-   payloads, `match` over bytes with named constants, and no `raw`
+   payloads, `match` over byte literals (`'{'`, and `"\t"` for a control
+   byte, which a raw `'…'` cannot spell), `?` only where a bare name would
+   not lend, and no `raw`
    beyond the one `isatty` call. Comments say only what the code cannot.
 2. **The expected documents are the authority.** A disagreement is a bug
    in the Rig code until an expected document is changed on purpose, and
@@ -27,7 +29,7 @@ and Zig 0.17.0.
 | File | Holds |
 |---|---|
 | `main.rig` | The program: dispatch, PATH checks, output, exit status, `isatty`. |
-| `loc/bytes.rig` | The bytes the code names, and the whitespace and regex byte tables. |
+| `loc/bytes.rig` | The whitespace and regex byte tables, and `is_ident`. |
 | `loc/lang.rig` | The language table, built once, and its lookups. |
 | `loc/scan.rig` | Line classification and the scanner. |
 | `loc/ignore.rig` | `.gitignore` matching, and the base the ignore files apply from. |

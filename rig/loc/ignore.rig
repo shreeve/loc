@@ -27,12 +27,12 @@ obj IgnoreFile
   patterns: List[Pattern]
 
 fun compile_pattern(text_line: ?String) -> Pattern?
-  negate = text_line[0] == EXCLAMATION
+  negate = text_line[0] == '!'
   glob = text_line[1..] if negate else text_line
-  dir_only = glob.len > 0 and glob[glob.len - 1] == SLASH
+  dir_only = glob.len > 0 and glob[glob.len - 1] == '/'
   glob = glob[..glob.len - 1] if dir_only
   anchored = text.contains(glob, "/")
-  glob = glob[1..] if anchored and glob[0] == SLASH
+  glob = glob[1..] if anchored and glob[0] == '/'
   return none if glob.len == 0
   steps, sets = compile_glob(glob)?
   Pattern(negate: negate, dir_only: dir_only, anchored: anchored, steps: <steps, sets: <sets)
@@ -47,24 +47,24 @@ fun compile_glob(glob: ?String) -> (List[Step], List[[256]Bool])?
     i = 3
   while i < glob.len
     c = glob[i]
-    after_slash = i > 0 and glob[i - 1] == SLASH
-    if c == ASTERISK and after_slash and text.starts_with(glob[i..], "**/")
+    after_slash = i > 0 and glob[i - 1] == '/'
+    if c == '*' and after_slash and text.starts_with(glob[i..], "**/")
       !steps.push(.any_dirs)
       i += 3
-    else if c == ASTERISK and after_slash and glob[i..] == "**"
+    else if c == '*' and after_slash and glob[i..] == "**"
       !steps.push(.rest)
       i += 2
-    else if c == ASTERISK
+    else if c == '*'
       !steps.push(.any)
       i += 1
-      i += 1 if i < glob.len and glob[i] == ASTERISK  # any other ** is *
-    else if c == QUESTION
+      i += 1 if i < glob.len and glob[i] == '*'  # any other ** is *
+    else if c == '?'
       !steps.push(.one)
       i += 1
-    else if c == BACKSLASH and i + 1 < glob.len
+    else if c == '\' and i + 1 < glob.len
       !steps.push(.byte(glob[i + 1]))
       i += 2
-    else if c == OPEN_BRACKET
+    else if c == '['
       set, inside, n = compile_class(glob[i..])?
       !steps.push(.class(set: sets.len, inside: inside))
       !sets.push(set)
@@ -79,19 +79,19 @@ fun compile_class(glob: ?String) -> ([256]Bool, Bool, Int)?
   set = [256 of false]
   inside = true
   j = 1
-  if j < glob.len and (glob[j] == EXCLAMATION or glob[j] == CARET)
+  if j < glob.len and (glob[j] == '!' or glob[j] == '^')
     inside = false
     j += 1
   member = false  # whether the previous byte can start a range
   while j < glob.len
     c = glob[j]
-    if c == CLOSE_BRACKET
+    if c == ']'
       return set, inside, j + 1
-    if c == BACKSLASH and j + 1 < glob.len
+    if c == '\' and j + 1 < glob.len
       set[glob[j + 1]] = true
       member = true
       j += 2
-    else if c == MINUS and member and j + 1 < glob.len and glob[j + 1] != CLOSE_BRACKET
+    else if c == '-' and member and j + 1 < glob.len and glob[j + 1] != ']'
       for b in glob[j - 1]..=glob[j + 1]
         set[b] = true
       member = false
@@ -106,18 +106,18 @@ fun matches(p: ?Pattern, at: Int, subject: ?String) -> Bool
   return subject.len == 0 if at == p.steps.len
   match p.steps[at]
     .byte(b) => subject.len > 0 and subject[0] == b and matches(p, at + 1, subject[1..])
-    .one => subject.len > 0 and subject[0] != SLASH and matches(p, at + 1, subject[1..])
+    .one => subject.len > 0 and subject[0] != '/' and matches(p, at + 1, subject[1..])
     .class(set, inside)
-      subject.len > 0 and subject[0] != SLASH and p.sets[set][subject[0]] == inside and matches(p, at + 1, subject[1..])
+      subject.len > 0 and subject[0] != '/' and p.sets[set][subject[0]] == inside and matches(p, at + 1, subject[1..])
     .any
       for k in 0..subject.len + 1
         return true if matches(p, at + 1, subject[k..])
-        return false if k == subject.len or subject[k] == SLASH
+        return false if k == subject.len or subject[k] == '/'
       false
     .any_dirs
       return true if matches(p, at + 1, subject)
       for k in 0..subject.len
-        return true if subject[k] == SLASH and matches(p, at + 1, subject[k + 1..])
+        return true if subject[k] == '/' and matches(p, at + 1, subject[k + 1..])
       false
     .rest => true
 
@@ -126,9 +126,9 @@ fun parse_ignore(body: ?String, offset: Int) -> IgnoreFile
   for piece in text.split(body, "\n")
     entry = text.strip_suffix(piece, "\r") ?? piece
     # trailing spaces go unless the last is escaped
-    while entry.len > 0 and entry[entry.len - 1] == SPACE and not (entry.len > 1 and entry[entry.len - 2] == BACKSLASH)
+    while entry.len > 0 and entry[entry.len - 1] == ' ' and not (entry.len > 1 and entry[entry.len - 2] == '\')
       entry = entry[..entry.len - 1]
-    continue if entry.len == 0 or entry[0] == HASH
+    continue if entry.len == 0 or entry[0] == '#'
     if compile_pattern(entry) as p
       !patterns.push(<p)
   IgnoreFile(offset: offset, patterns: <patterns)
@@ -136,14 +136,14 @@ fun parse_ignore(body: ?String, offset: Int) -> IgnoreFile
 # One that cannot be read is none, as Rust's `.ok()` makes it; the walk reports the file.
 fun read_ignore(dir: ?String, offset: Int) -> IgnoreFile?
   body = (file.read(join(dir, ".gitignore")) catch none)?
-  parse_ignore(?body, offset)
+  parse_ignore(body, offset)
 
 fun pattern_file(lines: ?List[String], offset: Int) -> IgnoreFile
   joined = String()
   for p, i in lines
-    !joined.push(LINE_FEED) if i > 0
+    !joined.push("\n") if i > 0
     !joined.add(p)
-  parse_ignore(?joined, offset)
+  parse_ignore(joined, offset)
 
 # The last matching line decides.
 fun decides(f: ?IgnoreFile, rel: ?String, name: ?String, is_dir: Bool) -> Bool?
@@ -174,7 +174,7 @@ fun ignored(excludes: ?IgnoreFile?, ignores: ?Ignores, rel: ?String, name: ?Stri
     i = node.files.len
     while i > 0
       i -= 1
-      if decides(?node.files[i], rel, name, is_dir) as status
+      if decides(node.files[i], rel, name, is_dir) as status
         return status
     at = node.up
   false
@@ -202,7 +202,7 @@ fun absolute(root: ?String) -> String
 fun ancestors(root: ?String) -> (List[IgnoreFile], String)
   abs = absolute(root)
   stack: List[IgnoreFile] = List()
-  return stack, String() if has_git(?abs)
+  return stack, String() if has_git(abs)
   chain: List[?String] = List()
   dir = ?abs[..]
   found = false
@@ -214,7 +214,7 @@ fun ancestors(root: ?String) -> (List[IgnoreFile], String)
     dir = parent
   return stack, String() if not found
   base = chain[chain.len - 1]
-  rel = String(below(base, ?abs))
+  rel = String(below(base, abs))
   i = chain.len
   while i > 0
     i -= 1

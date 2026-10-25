@@ -75,7 +75,7 @@ pub obj Options
   pub ?roots: List[String] = List()
 
   pub fun only_lang(?@) -> Bool
-    slices.contains(?@only_langs, true)
+    slices.contains(@only_langs, true)
 
 # -h, then --languages, anywhere before -- win over every other flag; then
 # one pass, the first error winning. A value may start with -.
@@ -96,49 +96,44 @@ pub fun parse(args: []Static, table: ?Table) -> Command!Usage
     arg = args[i]
     if not flags or not text.starts_with(arg, "-")
       !opts.roots.push(String(arg))
-    else if arg == "--"
-      flags = false
-    else if arg == "--json"
-      opts.json = true
-    else if arg == "--no-color"
-      opts.no_color = true
-    else if arg == "--no-ignore"
-      opts.no_ignore = true
-    else if arg == "--by-file" or arg == "-f"
-      opts.by_file = true
-    else if arg == "--exclude" or arg == "-e" or text.starts_with(arg, "--exclude=")
-      pattern = value(args, !i, "--exclude") ?? ""
-      return Usage.needs_pattern(flag: "--exclude") if pattern.len == 0
-      !opts.excludes.push(String(pattern))
-    else if arg == "--only" or arg == "-o" or text.starts_with(arg, "--only=")
-      pattern = value(args, !i, "--only") ?? ""
-      return Usage.needs_pattern(flag: "--only") if pattern.len == 0
-      !opts.only.push(String(pattern))
-    else if arg == "--exclude-lang" or arg == "-x" or text.starts_with(arg, "--exclude-lang=")
-      li = language(table, "--exclude-lang", value(args, !i, "--exclude-lang"))!
-      opts.excluded_langs[li] = true
-    else if arg == "--only-lang" or arg == "-l" or text.starts_with(arg, "--only-lang=")
-      li = language(table, "--only-lang", value(args, !i, "--only-lang"))!
-      opts.only_langs[li] = true
-    else if arg == "--jobs" or text.starts_with(arg, "--jobs=")
-      digits = value(args, !i, "--jobs") ?? ""
-      n = text.parse_int(digits) catch return Usage.bad_jobs
-      return Usage.bad_jobs if n < 1 or text.starts_with(digits, "+")
-      opts.jobs = n
-    else
-      return Usage.unknown_flag(flag: lossy(arg))
-  return Usage.both_lang_flags if opts.only_lang() and slices.contains(?opts.excluded_langs, true)
+      continue
+    match arg
+      "--" => flags = false
+      "--json" => opts.json = true
+      "--no-color" => opts.no_color = true
+      "--no-ignore" => opts.no_ignore = true
+      "--by-file", "-f" => opts.by_file = true
+      _ if is(arg, "--exclude", "-e") => !opts.excludes.push(pattern(args, !i, "--exclude")!)
+      _ if is(arg, "--only", "-o") => !opts.only.push(pattern(args, !i, "--only")!)
+      _ if is(arg, "--exclude-lang", "-x") => opts.excluded_langs[language(table, args, !i, "--exclude-lang")!] = true
+      _ if is(arg, "--only-lang", "-l") => opts.only_langs[language(table, args, !i, "--only-lang")!] = true
+      _ if is(arg, "--jobs")
+        digits = value(args, !i, "--jobs") ?? ""
+        n = text.parse_int(digits) catch return Usage.bad_jobs
+        return Usage.bad_jobs if n < 1 or text.starts_with(digits, "+")
+        opts.jobs = n
+      _ => return Usage.unknown_flag(flag: lossy(arg))
+  return Usage.both_lang_flags if opts.only_lang() and slices.contains(opts.excluded_langs, true)
   !opts.roots.push(String(".")) if opts.roots.len == 0
   Command.run(opts: <opts)
 
 fun value(args: []Static, i: !Int, flag: Static) -> Static?
   arg = args[i]
-  if arg.len > flag.len and text.starts_with(arg, flag) and arg[flag.len] == EQUALS
+  if arg.len > flag.len and text.starts_with(arg, flag) and arg[flag.len] == '='
     return arg[flag.len + 1..]
   i += 1
   args.get(i)
 
-fun language(table: ?Table, flag: Static, name: Static?) -> Int!Usage
-  given = name ?? ""
+# The flag, its short form, or the flag with its value after =.
+fun is(arg: Static, flag: Static, short: Static = "") -> Bool
+  arg == flag or arg == short or (text.starts_with(arg, flag) and arg.len > flag.len and arg[flag.len] == '=')
+
+fun pattern(args: []Static, i: !Int, flag: Static) -> String!Usage
+  given = value(args, !i, flag) ?? ""
+  return Usage.needs_pattern(flag: flag) if given.len == 0
+  String(given)
+
+fun language(table: ?Table, args: []Static, i: !Int, flag: Static) -> Int!Usage
+  given = value(args, !i, flag) ?? ""
   return Usage.needs_language(flag: flag) if given.len == 0
   table.by_language(given) ?? return Usage.unknown_language(name: lossy(given))

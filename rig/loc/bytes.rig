@@ -1,43 +1,5 @@
 use std.text
 
-TAB: U8 = 0x09
-LINE_FEED: U8 = 0x0A
-VERTICAL_TAB: U8 = 0x0B
-FORM_FEED: U8 = 0x0C
-CR: U8 = 0x0D
-SPACE: U8 = 0x20
-EXCLAMATION: U8 = 0x21
-DOUBLE_QUOTE: U8 = 0x22
-HASH: U8 = 0x23
-DOLLAR: U8 = 0x24
-PERCENT: U8 = 0x25
-AMPERSAND: U8 = 0x26
-APOSTROPHE: U8 = 0x27
-OPEN_PAREN: U8 = 0x28
-CLOSE_PAREN: U8 = 0x29
-ASTERISK: U8 = 0x2A
-PLUS: U8 = 0x2B
-COMMA: U8 = 0x2C
-MINUS: U8 = 0x2D
-SLASH: U8 = 0x2F
-COLON: U8 = 0x3A
-SEMICOLON: U8 = 0x3B
-LESS_THAN: U8 = 0x3C
-EQUALS: U8 = 0x3D
-GREATER_THAN: U8 = 0x3E
-QUESTION: U8 = 0x3F
-OPEN_BRACKET: U8 = 0x5B
-BACKSLASH: U8 = 0x5C
-CLOSE_BRACKET: U8 = 0x5D
-CARET: U8 = 0x5E
-UNDERSCORE: U8 = 0x5F
-BACKTICK: U8 = 0x60
-LOWER_B: U8 = 0x62
-LOWER_R: U8 = 0x72
-OPEN_BRACE: U8 = 0x7B
-PIPE: U8 = 0x7C
-CLOSE_BRACE: U8 = 0x7D
-TILDE: U8 = 0x7E
 
 # Exactly SPEC's bytes: whitespace for the blank rule, and the bytes before a regex.
 enum ByteSet
@@ -49,10 +11,10 @@ fun byte_set[s: ByteSet] -> [256]Bool
   for b in 0..=U8.max
     t[b] = match s
       .whitespace => match b
-        SPACE, TAB, CR, FORM_FEED, VERTICAL_TAB => true
+        ' ', "\t", "\r", "\x0c", "\x0b" => true
         _ => false
       .regex_prev => match b
-        OPEN_PAREN, COMMA, EQUALS, COLON, OPEN_BRACKET, EXCLAMATION, AMPERSAND, PIPE, QUESTION, OPEN_BRACE, CLOSE_BRACE, SEMICOLON, PLUS, MINUS, ASTERISK, PERCENT, LESS_THAN, GREATER_THAN, TILDE, CARET => true
+        '(', ',', '=', ':', '[', '!', '&', '|', '?', '{', '}', ';', '+', '-', '*', '%', '<', '>', '~', '^' => true
         _ => false
   t
 
@@ -60,4 +22,4 @@ WHITESPACE = byte_set[.whitespace]
 REGEX_PREV = byte_set[.regex_prev]
 
 fun is_ident(b: U8) -> Bool
-  text.is_alpha(b) or text.is_digit(b) or b == UNDERSCORE or b == DOLLAR
+  text.is_alpha(b) or text.is_digit(b) or b == '_' or b == '$'

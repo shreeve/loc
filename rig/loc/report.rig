@@ -62,7 +62,7 @@ pub obj Report
   pub fun json(?@) -> String
     out = String("{\"languages\":[")
     for row, i in ?@languages
-      !out.push(0x2C) if i > 0
+      !out.push(',') if i > 0
       !out.add("{\"name\":")
       json_str(!out, row.name)
       !out.add(",\"files\":", row.files)
@@ -71,9 +71,9 @@ pub obj Report
       if @by_file
         !out.add(",\"by_file\":[")
         for f, k in ?row.by_file
-          !out.push(0x2C) if k > 0
+          !out.push(',') if k > 0
           !out.add("{\"path\":")
-          json_str(!out, ?f.path)
+          json_str(!out, f.path)
           counts_json(!out, f.counts)
           !out.add(",\"bytes\":", f.bytes, "}")
         !out.add("]")
@@ -81,9 +81,9 @@ pub obj Report
     !out.add("],\"total\":{\"files\":", @files)
     counts_json(!out, @total)
     !out.add(",\"bytes\":", @bytes, "},\"skipped\":{")
-    group_json(!out, "text", ?@text)
-    !out.push(0x2C)
-    group_json(!out, "binary", ?@binary)
+    group_json(!out, "text", @text)
+    !out.push(',')
+    group_json(!out, "binary", @binary)
     !out.add("}}\n")
     out
 
@@ -127,35 +127,35 @@ pub obj Report
       !rows.push(count_cells(String(prefix, l.name), l.files, l.counts, @total.code))
       !colors.push(l.color)
       for f in ?l.by_file
-        cells = count_cells(String(prefix, shorten(?f.path)), 0, f.counts, @total.code)
+        cells = count_cells(String(prefix, shorten(f.path)), 0, f.counts, @total.code)
         cells[1] = String()
         !rows.push(<cells)
         !colors.push(none)
     !rows.push(count_cells(String(prefix, "Total"), @files, @total, @total.code))
     body = rows.len - 1
-    g = grid(header_cells(prefix, ["Language", "Files", "Lines", "Blank", "Comment", "Code", "%"]), ?rows, false)
+    g = grid(header_cells(prefix, ["Language", "Files", "Lines", "Blank", "Comment", "Code", "%"]), rows, false)
 
     rule = g.rule()
     out = String()
     if styled and @total.code > 0
       !out.add(@bar(g.width()), "\n")
-    put_line(!out, styled, DIM, ?rule)
-    put_line(!out, styled, BOLD, g.line(?g.headers))
-    put_line(!out, styled, DIM, ?rule)
+    put_line(!out, styled, DIM, rule)
+    put_line(!out, styled, BOLD, g.line(g.headers))
+    put_line(!out, styled, DIM, rule)
     # With --by-file every language is a framed section.
     for cells, i in ?rows[..body]
-      text_line = g.line(?cells)
+      text_line = g.line(cells)
       if colors[i] as c
         if @by_file and i > 0
-          put_line(!out, styled, DIM, ?rule)
-        dot_line(!out, styled, c, ?text_line)
+          put_line(!out, styled, DIM, rule)
+        dot_line(!out, styled, c, text_line)
         if @by_file
-          put_line(!out, styled, DIM, ?rule)
+          put_line(!out, styled, DIM, rule)
       else
         !out.add(text_line, "\n")
-    put_line(!out, styled, DIM, ?rule)
-    put_line(!out, styled, BOLD, g.line(?rows[body]))
-    put_line(!out, styled, DIM, ?rule)
+    put_line(!out, styled, DIM, rule)
+    put_line(!out, styled, BOLD, g.line(rows[body]))
+    put_line(!out, styled, DIM, rule)
     return out if @only_lang and @text.files == 0 and @binary.files == 0
     !out.add("\n")
 
@@ -178,14 +178,14 @@ pub obj Report
           rest_files += s.files
           rest_bytes += s.bytes
         !rows.push(skipped_row(String(with_commas(labels.len - SHOWN_LABELS), " more labels"), rest_files, rest_bytes, all_bytes))
-      sg = grid(header_cells("", ["Skipped", "Files", "Size", "%"]), ?rows, false)
+      sg = grid(header_cells("", ["Skipped", "Files", "Size", "%"]), rows, false)
       rule = sg.rule()
-      put_line(!out, styled, DIM, ?rule)
-      put_line(!out, styled, DIM, sg.line(?sg.headers))
-      put_line(!out, styled, DIM, ?rule)
+      put_line(!out, styled, DIM, rule)
+      put_line(!out, styled, DIM, sg.line(sg.headers))
+      put_line(!out, styled, DIM, rule)
       for cells in ?rows
-        put_line(!out, styled, DIM, sg.line(?cells))
-      put_line(!out, styled, DIM, ?rule)
+        put_line(!out, styled, DIM, sg.line(cells))
+      put_line(!out, styled, DIM, rule)
     if @binary.files > 0
       blabels = ?@binary.labels
       b = String(with_commas(@binary.files), " binary file", "" if @binary.files == 1 else "s", ", ", size(@binary.bytes), ": ")
@@ -214,7 +214,7 @@ pub fun report(table: ?Table, sums: Sums, only_lang: Bool) -> Report
   by_file = sums.by_file != none
   if ?sums.by_file as found
     for r in found
-      !rows[row_of[r.lang]].by_file.push(FileEntry(path: shown_path(?r.path), counts: r.counts, bytes: r.bytes))
+      !rows[row_of[r.lang]].by_file.push(FileEntry(path: shown_path(r.path), counts: r.counts, bytes: r.bytes))
   for row in !rows
     sort.sort_by(!row.by_file, |a, b| a.counts.code > b.counts.code or (a.counts.code == b.counts.code and a.path < b.path))
   sort.sort_by(!rows, |a, b| a.counts.code > b.counts.code or (a.counts.code == b.counts.code and a.name < b.name))
@@ -223,8 +223,8 @@ pub fun report(table: ?Table, sums: Sums, only_lang: Bool) -> Report
     total: total,
     files: files,
     bytes: bytes,
-    text: skipped_group(?sums.text),
-    binary: skipped_group(?sums.binary),
+    text: skipped_group(sums.text),
+    binary: skipped_group(sums.binary),
     by_file: by_file,
     only_lang: only_lang,
   )
@@ -247,7 +247,7 @@ pub fun language_list(table: ?Table, styled: Bool) -> String
         !items.push(e)
     for n in l.names
       !items.push(n)
-    lines = wrap(?items)
+    lines = wrap(items)
     !lines.push(String()) if lines.len == 0
     for cell, k in <lines
       first = String(prefix, l.name) if k == 0 else String()
@@ -256,14 +256,14 @@ pub fun language_list(table: ?Table, styled: Bool) -> String
       !cells.push(<cell)
       !rows.push(<cells)
       !firsts.push(i if k == 0 else -1)
-  g = grid(header_cells(prefix, ["Language", "Files"]), ?rows, true)
+  g = grid(header_cells(prefix, ["Language", "Files"]), rows, true)
   rule = g.rule()
   out = String()
-  put_line(!out, styled, DIM, ?rule)
-  put_line(!out, styled, BOLD, String(text.trim_end(g.line(?g.headers))))
-  put_line(!out, styled, DIM, ?rule)
+  put_line(!out, styled, DIM, rule)
+  put_line(!out, styled, BOLD, String(text.trim_end(g.line(g.headers))))
+  put_line(!out, styled, DIM, rule)
   for cells, k in ?rows
-    t = g.line(?cells)
+    t = g.line(cells)
     shown = text.trim_end(?t)
     if firsts[k] >= 0
       dot_line(!out, styled, table.langs[firsts[k]].color, shown)
@@ -312,22 +312,22 @@ pub fun lossy(bytes: ?String) -> String
   out
 
 sub json_str(out: !String, s: ?String)
-  !out.push(DOUBLE_QUOTE)
+  !out.push('"')
   for b in s
     match b
-      DOUBLE_QUOTE => !out.add("\\\"")
-      BACKSLASH => !out.add("\\\\")
-      LINE_FEED => !out.add("\\n")
-      CR => !out.add("\\r")
-      TAB => !out.add("\\t")
+      '"' => !out.add("\\\"")
+      '\' => !out.add("\\\\")
+      "\n" => !out.add("\\n")
+      "\r" => !out.add("\\r")
+      "\t" => !out.add("\\t")
       0x08 => !out.add("\\b")
-      FORM_FEED => !out.add("\\f")
-      c if c < SPACE
+      "\x0c" => !out.add("\\f")
+      c if c < ' '
         !out.add("\\u00")
         !out.push(HEX[Int(c) >> 4])
         !out.push(HEX[Int(c) & 15])
       _ => !out.push(b)
-  !out.push(DOUBLE_QUOTE)
+  !out.push('"')
 
 HEX = "0123456789abcdef"
 
@@ -337,21 +337,16 @@ sub counts_json(out: !String, c: Counts)
 sub group_json(out: !String, key: Static, g: ?SkippedGroup)
   !out.add("\"", key, "\":{\"files\":", g.files, ",\"bytes\":", g.bytes, ",\"labels\":[")
   for s, i in ?g.labels
-    !out.push(0x2C) if i > 0
+    !out.push(',') if i > 0
     !out.add("{\"label\":")
-    json_str(!out, ?s.label)
+    json_str(!out, s.label)
     !out.add(",\"files\":", s.files, ",\"bytes\":", s.bytes, "}")
   !out.add("]}")
 
 called fun count_cells(name: String, files: Int, c: Counts, whole: Int) -> List[String]
   cells: List[String] = List()
-  !cells.push(<name)
-  !cells.push(with_commas(files))
-  !cells.push(with_commas(c.lines))
-  !cells.push(with_commas(c.blank))
-  !cells.push(with_commas(c.comment))
-  !cells.push(with_commas(c.code))
-  !cells.push(share(c.code, whole))
+  for cell in [<name, with_commas(files), with_commas(c.lines), with_commas(c.blank), with_commas(c.comment), with_commas(c.code), share(c.code, whole)]
+    !cells.push(<cell)
   cells
 
 called fun skipped_row(label: String, files: Int, bytes: Int, whole: Int) -> List[String]
@@ -391,7 +386,7 @@ fun with_commas(n: Int) -> String
   digits = String(n)
   out = String()
   for c, i in ?digits
-    !out.push(0x2C) if i > 0 and (digits.len - i) % 3 == 0
+    !out.push(',') if i > 0 and (digits.len - i) % 3 == 0
     !out.push(c)
   out
 
@@ -427,7 +422,7 @@ obj Grid
     out
 
   fun width(?@) -> Int
-    utf8.rune_count(@line(?@headers))
+    utf8.rune_count(@line(@headers))
 
   fun rule(?@) -> String
     out = String()
@@ -448,7 +443,7 @@ fun grid(headers: List[String], rows: ?List[List[String]], left: Bool) -> Grid
 
 sub pad(out: !String, n: Int)
   for 0..n
-    !out.push(SPACE)
+    !out.push(' ')
 
 # A language's line: when styled, its dot in its color over the line's two-space prefix.
 sub dot_line(out: !String, styled: Bool, c: [3]U8, line: ?String)

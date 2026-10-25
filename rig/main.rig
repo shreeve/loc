@@ -7,8 +7,8 @@ extern fun isatty(fd: I32) -> I32
 
 fun main() -> Int
   table = loc.languages()
-  command = loc.parse(os.args()[1..], ?table) catch |e|
-    warn(loc.describe(?e))
+  command = loc.parse(os.args()[1..], table) catch |e|
+    warn(loc.describe(e))
     warn(loc.USAGE)
     return 1
   match <command
@@ -16,28 +16,28 @@ fun main() -> Int
       say(loc.help())
       0
     .languages(no_color)
-      say(loc.language_list(?table, not no_color and terminal()))
+      say(loc.language_list(table, not no_color and terminal()))
       0
     .run(opts)
       readable = true
       checked: List[loc.Root] = List()
       for root in opts.roots
         got = loc.check_root(root) catch |e|
-          warn(String("loc: ", loc.lossy(root), ": ", loc.reason(?e)))
+          warn(String("loc: ", loc.lossy(root), ": ", loc.reason(e)))
           readable = false
           continue
         !checked.push(<got)
       return 2 if not readable
-      sums = loc.count_trees(?table, ?opts, <checked) catch |e|
+      sums = loc.count_trees(table, opts, <checked) catch |e|
         warn(String("loc: ", e))
         return 1
-      report = loc.report(?table, <sums, opts.only_lang())
+      report = loc.report(table, <sums, opts.only_lang())
       say(report.json() if opts.json else report.table(not opts.no_color and terminal()))
       0
 
 # `print` adds the last newline.
 sub say(out: String)
-  print(?out[..out.len - 1])
+  print(out[..out.len - 1])
 
 fun terminal() -> Bool
   tty: I32 = 0

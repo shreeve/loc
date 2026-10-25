@@ -33,7 +33,7 @@ obj StrKind
 fun kind(open: Static, close: Static, escape: Bool, multiline: Bool, interp: Interp? = none) -> StrKind
   k = StrKind(open: open, close: close, escape: escape, multiline: multiline, interp: interp)
   k.stop[close[0]] = true
-  k.stop[BACKSLASH] = true
+  k.stop[U8('\')] = true
   if interp as i
     for o in openers(i)
       k.stop[o[0]] = true
@@ -107,12 +107,12 @@ obj Lang
 pub obj Table
   langs: List[Lang]
   char: StrKind                       # the char literal
-  by_ext: Map[String, Int]
-  by_claim: Map[String, Int]
-  by_name: Map[String, Int]
-  by_shebang: Map[String, Int]
-  binary_exts: Set[String]
-  text_exts: Set[String]
+  by_ext: Map[String, Int] = Map()
+  by_claim: Map[String, Int] = Map()
+  by_name: Map[String, Int] = Map()
+  by_shebang: Map[String, Int] = Map()
+  binary_exts: Set[String] = Set()
+  text_exts: Set[String] = Set()
 
   # `lower` is lower-cased already, dot included.
   fun by_extension(?@, lower: ?String) -> Int?
@@ -475,21 +475,21 @@ pub fun languages() -> Table
 # A MUMPS routine's first line: `;` at column zero, or an optional label
 # and formal list, then spaces or tabs, then `;`.
 fun mumps_routine(first: ?String) -> Bool
-  return true if first.len > 0 and first[0] == SEMICOLON
+  return true if first.len > 0 and first[0] == ';'
   i = 0
-  if first.len > 0 and (first[0] == PERCENT or text.is_alpha(first[0]))
+  if first.len > 0 and (first[0] == '%' or text.is_alpha(first[0]))
     i = 1
     while i < first.len and (text.is_alpha(first[i]) or text.is_digit(first[i]))
       i += 1
-    if i < first.len and first[i] == OPEN_PAREN
-      while i < first.len and first[i] != CLOSE_PAREN
+    if i < first.len and first[i] == '('
+      while i < first.len and first[i] != ')'
         i += 1
       return false if i == first.len
       i += 1
   label_end = i
-  while i < first.len and (first[i] == SPACE or first[i] == TAB)
+  while i < first.len and (first[i] == ' ' or first[i] == "\t")
     i += 1
-  i > label_end and i < first.len and first[i] == SEMICOLON
+  i > label_end and i < first.len and first[i] == ';'
 
 # Common enough to decide by name alone, so the file is never opened.
 pub BINARY_EXTENSIONS = [
@@ -515,7 +515,7 @@ sub prepare(langs: !List[Lang])
         .between(_, _, lang) => lang
       !l.region_langs.push(slices.index_of(names, want) ?? panic("no language named", want))
     l.starts = WHITESPACE
-    l.starts[BACKSLASH] = true
+    l.starts[U8('\')] = true
     for o in l.line
       l.starts[o[0]] = true
     if l.block_open.len > 0
@@ -523,29 +523,20 @@ sub prepare(langs: !List[Lang])
     for k in l.strings
       l.starts[k.open[0]] = true
       if k.interp != none
-        l.starts[OPEN_BRACE] = true
-        l.starts[CLOSE_BRACE] = true
+        l.starts[U8('{')] = true
+        l.starts[U8('}')] = true
     if l.chars != none
-      l.starts[APOSTROPHE] = true
+      l.starts[U8("'")] = true
     if l.regex != none
-      l.starts[SLASH] = true
+      l.starts[U8('/')] = true
     if l.rust_raw
-      l.starts[LOWER_R] = true
-      l.starts[LOWER_B] = true
+      l.starts[U8('r')] = true
+      l.starts[U8('b')] = true
     if l.heredoc != none or l.regions.len > 0
-      l.starts[LESS_THAN] = true
+      l.starts[U8('<')] = true
 
 fun indexed(langs: List[Lang]) -> Table
-  t = Table(
-    langs: <langs,
-    char: sq(),
-    by_ext: Map[String, Int](),
-    by_claim: Map[String, Int](),
-    by_name: Map[String, Int](),
-    by_shebang: Map[String, Int](),
-    binary_exts: Set[String](),
-    text_exts: Set[String](),
-  )
+  t = Table(langs: <langs, char: sq())
   for l, i in t.langs
     for e in l.extensions
       !t.by_ext.put(String(e), i)
