@@ -2,26 +2,29 @@
 
 Counts lines of code across a directory tree in 36 languages. Honors `.gitignore` and `--exclude` patterns, skips binaries and symlinks, and reports what it skipped by size so you can tell whether the count is representative.
 
-`loc -e fixtures .` on this repository:
+`loc -e fixtures -e website .` on this repository:
 
 ```
 ──────────────────────────────────────────────────────────────────────────
 Language      Files      Lines      Blank    Comment       Code          %
 ──────────────────────────────────────────────────────────────────────────
-Rust              8      3,709        206         93      3,410       93.0
-Markdown          2        347         96          0        251        6.8
-TOML              1          5          0          0          5        0.1
+Rust              8      4,351        236        106      4,009       53.0
+Rig               9      2,427        216        103      2,108       27.9
+Shell             3        936         79         41        816       10.8
+Markdown          5        741        149          0        592        7.8
+YAML              1         34          4          3         27        0.4
+TOML              1          6          0          0          6        0.1
 ──────────────────────────────────────────────────────────────────────────
-Total            11      4,061        302         93      3,666      100.0
+Total            27      8,495        684        253      7,558      100.0
 ──────────────────────────────────────────────────────────────────────────
 
-3 of 14 files skipped, 1.2 KB of 169.8 KB of text (0.7%)
+3 of 30 files skipped, 1.2 KB of 328.7 KB of text (0.4%)
 ───────────────────────────────────────────
 Skipped         Files       Size          %
 ───────────────────────────────────────────
-LICENSE             1     1.1 KB        0.6
-.lock               1      147 B        0.1
-.gitignore          1       18 B        0.0
+LICENSE             1     1.1 KB        0.3
+.lock               1      147 B        0.0
+.gitignore          1       24 B        0.0
 ───────────────────────────────────────────
 ```
 
@@ -135,7 +138,7 @@ Standard library only. Unix only: file names are handled as bytes.
 
 ## The Rig version
 
-`rig/` holds a second implementation of loc in [Rig](https://github.com/shreeve/rig), built as `bin/loco`. It is held to the same `SPEC.md` and the same four expected documents, byte for byte, styled output included. On large trees it runs 35 to 50% faster than the Rust, and it scans 17 to 20% faster; on small ones it is about 2 ms slower. The Rust code is never changed. The Rig version needs Rig 0.2.9 at main 6c3f35b78 or later, and Zig 0.17.0; `rig/DESIGN.md` describes the design and its measurements.
+`rig/` holds a second implementation of loc in [Rig](https://github.com/shreeve/rig), built as `bin/loco`. It is held to the same `SPEC.md` and the same four expected documents, byte for byte, styled output included. On large trees it runs 35 to 50% faster than the Rust, it scans 17 to 20% faster, and 20,000 files given as PATHs take 20% less time; on small trees it is about 2 ms slower. Its page is [shreeve.github.io/loc](https://shreeve.github.io/loc/). The Rust code is never changed. The Rig version needs Rig 0.2.9 at main 6c3f35b78 or later, and Zig 0.17.0; `rig/DESIGN.md` describes the design and its measurements, `HANDOFF.md` says where the work stands, and `AGENTS.md` holds the rules for changing it.
 
 ```
 rig/build.sh                     # bin/loco

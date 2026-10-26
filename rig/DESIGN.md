@@ -235,13 +235,10 @@ of `test.sh`. The Rig version follows SPEC, or the closest Rig gives.
 Measured here; none blocks loco.
 
 - Every file call is a hop to the blocking pool and a wake back: in C,
-  a hop per file cost 42% on one thread. A worker with nothing else to
-  run could make a regular-file call itself (approved for Rig, not yet
-  built); loco's walker tasks only overlap the hops.
-- The blocking pool's lock spins without backing off and reads the clock
-  while held: under load it is the top frame of a `--jobs=1` profile
-  (62% of the worker's time), and a private patch cut a large walk's
-  user time from 14.9 s to 1.4 s at the same wall time.
+  a hop per file cost 42% on one thread. Running a regular-file call on
+  a worker with nothing else to run was built and measured (Rig PR
+  #689) and not taken: loco's calls nearly always find other work
+  queued, so it did not gain. loco's walker tasks overlap the hops.
 - The allocator keeps a freed large block only for an allocation of
   exactly its size, so each file read whole of a new size faults in
   fresh pages: 24,600 page reclaims against Rust's 3,000 on 9,000 files
