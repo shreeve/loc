@@ -177,27 +177,30 @@ every PATH is checked. Styling asks `isatty(1)`, then `NO_COLOR` and
 
 ## Speed
 
-The scanner was measured against the repository's `scan.rs` on a 101 MB
-corpus with identical counts: Rust 243 ms, Rig 196 ms. `--release=fast`
-gains nothing, so the program builds with `--release` (safe); the rest of
-the gap is I/O and concurrency.
+`--release=fast` gains nothing, so the program builds with `--release`
+(safe).
 
-On `~/Data/Code/trig` with no ignore rules (125,268 files), on Trig and
-Rig with their ignore rules, and on small trees. Interleaved runs, fastest
-of seven, on a 10-core machine (4 performance cores) at load 7 to 15:
+Interleaved runs, fastest of seven, on a 10-core machine (4 performance
+cores) at load 2.6, loco from 0d9bc00 built with Rig main 6c3f35b78. A
+second round at load 6 to 9 kept every ratio within 0.1. `~/Data/Code/trig`
+holds 125,268 files.
 
 | Run | Rust | Rig | Ratio |
 |---|---|---|---|
-| `--no-ignore --json ~/Data/Code/trig` | 1,837 ms | 1,417 ms | 0.77x |
-| the same, `--jobs=1` | 3,367 ms | 1,952 ms | 0.58x |
-| `--no-ignore --json -l python ~/Data/Code/trig` | 214 ms | 123 ms | 0.58x |
-| `--no-ignore --json -o zzznomatch ~/Data/Code/trig` (the walk) | 191 ms | 120 ms | 0.63x |
-| `--json ~/Data/Code/trig` | 23.5 ms | 24.6 ms | 1.05x |
-| `--json ~/Data/Code/rig` | 141 ms | 139 ms | 0.98x |
-| `~/Data/Code/trig/src` (304 files, 13.8 MB) | 10.7 ms | 13.6 ms | 1.27x |
-| `--json .` of this repository | 7.7 ms | 10.1 ms | 1.31x |
-| `--json` of an empty directory | 5.5 ms | 6.2 ms | 1.13x |
-| 20,000 files given as PATHs | 666 ms | 1,112 ms | 1.67x |
+| `--no-ignore --json ~/Data/Code/trig` | 1,881 ms | 1,216 ms | 0.65x |
+| the same, `--jobs=1` | 3,377 ms | 1,692 ms | 0.50x |
+| `--no-ignore --json -l python ~/Data/Code/trig` | 219 ms | 113 ms | 0.52x |
+| `--no-ignore --json -o zzznomatch ~/Data/Code/trig` (the walk) | 183 ms | 104 ms | 0.57x |
+| `--no-ignore --json` of 8 trig subdirectories as PATHs | 1,899 ms | 1,223 ms | 0.64x |
+| `--jobs=1`, 130 MB of C, Go, HTML, JS, Python, Ruby, Rust, TS and Zig | 240 ms | 199 ms | 0.83x |
+| one 378 MB file of long string literals | 293 ms | 234 ms | 0.80x |
+| `--json ~/Data/Code/rig` | 139 ms | 129 ms | 0.92x |
+| `--json ~/Data/Code/trig` | 22.2 ms | 22.6 ms | 1.02x |
+| `~/Data/Code/trig/src` (304 files, 13.8 MB) | 10.2 ms | 12.6 ms | 1.24x |
+| `--json .` of this repository | 7.3 ms | 9.8 ms | 1.34x |
+| `--json -f fixtures` | 6.7 ms | 8.7 ms | 1.30x |
+| `--json` of an empty directory | 4.6 ms | 5.3 ms | 1.15x |
+| 20,000 files given as PATHs (load 3.5) | 632 ms | 1,061 ms | 1.68x |
 
 A small tree pays about 2 ms more than Rust: starting every worker, and
 a pool hop for each file call. Each PATH costs a few serial pool calls
