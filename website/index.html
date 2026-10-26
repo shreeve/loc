@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>loco · count lines of code, fast</title>
+  <meta name="description" content="loco is a free, open-source line counter for 36 languages. It honors .gitignore, reports exactly what it skipped, and reads 125,000 files in 1.2 seconds.">
+  <meta name="theme-color" content="#fafaf9" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#0c0a09" media="(prefers-color-scheme: dark)">
+  <meta property="og:title" content="loco · count lines of code, fast">
+  <meta property="og:description" content="A free line counter for 36 languages that honors .gitignore and tells you what it skipped. Written in Rig.">
+  <meta property="og:type" content="website">
+  <meta property="og:url" content="https://shreeve.github.io/loc/">
+  <link rel="icon" type="image/svg+xml" href="favicon.svg">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400..800&family=JetBrains+Mono:wght@400;500;700&display=swap">
+  <script>
+    try {
+      var t = localStorage.getItem('theme')
+      if (t === 'dark' || (t !== 'light' && matchMedia('(prefers-color-scheme: dark)').matches)) document.documentElement.classList.add('dark')
+    } catch (e) {
+      if (matchMedia('(prefers-color-scheme: dark)').matches) document.documentElement.classList.add('dark')
+    }
+  </script>
+  <script src="tailwind.min.js"></script>
+  <style type="text/tailwindcss">
+    @custom-variant dark (&:where(.dark, .dark *));
+    @theme {
+      --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
+      --font-mono: "JetBrains Mono", ui-monospace, "SF Mono", Menlo, monospace;
+      --color-accent: #ea580c;
+      --color-accent-soft: #fb923c;
+      --color-term: #0d1117;
+    }
+    @layer base {
+      html { scroll-behavior: smooth; scroll-padding-top: 5rem; }
+      body { @apply bg-stone-50 text-stone-900 antialiased dark:bg-stone-950 dark:text-stone-100; }
+      ::selection { @apply bg-accent/25; }
+    }
+  </style>
+  <style>
+    /* Before Rip mounts, and with no JavaScript: the plain page. */
+    #app > .static { max-width: 40rem; margin: 6rem auto; padding: 0 1rem; font-family: system-ui, sans-serif; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <div id="app">
+    <div class="static">
+      <h1>loco: count lines of code, fast</h1>
+      <p>loco counts lines of code across a directory tree in 36 languages. It honors <code>.gitignore</code>,
+        skips binaries and symlinks, and reports what it skipped by size, so you can tell whether the count
+        is representative. It is free and open source (MIT).</p>
+      <p><a href="https://github.com/shreeve/loc">Source and install instructions on GitHub</a></p>
+    </div>
+  </div>
+  <script type="text/rip" src="app.rip"></script>
+  <script type="module">
+    import { processRipScripts } from './rip.min.js'
+    processRipScripts()
+  </script>
+</body>
+</html>

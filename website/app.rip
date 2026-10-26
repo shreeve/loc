@@ -1,0 +1,570 @@
+# The loco product page. demo.json holds loco's real output (website/demo.py
+# makes it); the speed rows are rig/DESIGN.md's table.
+
+REPO = 'https://github.com/shreeve/loc'
+RIG = 'https://github.com/shreeve/rig'
+RIP = 'https://github.com/shreeve/rip'
+UPSTREAM = 'https://github.com/philiplindberg/loc'
+
+LANGS = [
+  ['C', '#555555', '.c .h']
+  ['C#', '#7355dd', '.cs']
+  ['C++', '#f34b7d', '.cpp .cc .cxx .hpp .hh .hxx']
+  ['CSS', '#663399', '.css']
+  ['CoffeeScript', '#244776', '.coffee']
+  ['Dart', '#00b4ab', '.dart']
+  ['Go', '#00add8', '.go']
+  ['Groovy', '#4298b8', '.groovy .gvy .gradle']
+  ['HTML', '#e34c26', '.html .htm']
+  ['JSON', '#292929', '.json .jsonc']
+  ['Java', '#b07219', '.java']
+  ['JavaScript', '#f1e05a', '.js .mjs .cjs .jsx']
+  ['Kotlin', '#a97bff', '.kt .kts']
+  ['Less', '#1d365d', '.less']
+  ['MUMPS', '#6b8e23', '.mumps .m']
+  ['Markdown', '#083fa1', '.md .markdown']
+  ['Objective-C', '#438eff', '.m .mm']
+  ['PHP', '#4f5d95', '.php .phtml']
+  ['Python', '#3572a5', '.py .pyi']
+  ['Rig', '#4b6584', '.rig']
+  ['Rip', '#ab2317', '.rip']
+  ['Ruby', '#701516', '.rb .rake .gemspec Gemfile Rakefile']
+  ['Rust', '#dea584', '.rs']
+  ['SCSS', '#c6538c', '.scss']
+  ['SQL', '#e38c00', '.sql']
+  ['Sass', '#a53b70', '.sass']
+  ['Scala', '#c22d40', '.scala .sc .sbt']
+  ['Shell', '#89e051', '.sh .bash .zsh .ksh .bashrc .bash_profile .profile .zshrc']
+  ['Svelte', '#ff3e00', '.svelte']
+  ['Swift', '#f05138', '.swift']
+  ['TOML', '#9c4221', '.toml']
+  ['TypeScript', '#3178c6', '.ts .tsx .mts .cts']
+  ['Vue', '#41b883', '.vue']
+  ['XML', '#0060ac', '.xml .xsd .xsl .xslt']
+  ['YAML', '#cb171e', '.yml .yaml']
+  ['Zig', '#ec915c', '.zig']
+]
+
+# Rust's loc against loco, fastest of seven, interleaved (rig/DESIGN.md).
+LARGE = [
+  { run: 'Every file in a 125,268-file tree', cmd: 'loco --no-ignore --json trig', rust: 1881, loco: 1216 }
+  { run: 'The same, on one thread', cmd: 'loco --no-ignore --json --jobs=1 trig', rust: 3377, loco: 1692 }
+  { run: 'One language out of 125,268 files', cmd: 'loco --no-ignore -l python trig', rust: 219, loco: 113 }
+  { run: 'The walk alone', cmd: 'loco --no-ignore -o zzznomatch trig', rust: 183, loco: 104 }
+  { run: '8 directories as PATHs', cmd: 'loco --no-ignore --json trig/*/', rust: 1899, loco: 1223 }
+  { run: '20,000 files as PATHs', cmd: 'loco f*.c', rust: 651, loco: 524 }
+  { run: '130 MB of source, one thread', cmd: 'loco --jobs=1 corpus', rust: 240, loco: 199 }
+  { run: 'One 378 MB file', cmd: 'loco big.rig', rust: 293, loco: 234 }
+]
+
+SMALL = [
+  { run: 'A 10,000-file repository', cmd: 'loco --json rig', rust: 139, loco: 129 }
+  { run: 'trig, honoring .gitignore', cmd: 'loco --json trig', rust: 22.2, loco: 22.6 }
+  { run: '304 files, 13.8 MB', cmd: 'loco trig/src', rust: 10.2, loco: 12.6 }
+  { run: 'An empty directory', cmd: 'loco --json empty', rust: 4.6, loco: 5.3 }
+]
+
+FEATURES = [
+  { icon: 'langs', title: '36 languages', body: 'Recognized by extension, by whole name (Gemfile, .bashrc), or by the #! line of a file with no extension. A .m file is MUMPS or Objective-C by its first line, and <script> and <style> inside HTML, Vue, Svelte and PHP are scanned by their own rules.' }
+  { icon: 'filter', title: 'Honors .gitignore', body: 'Every .gitignore in the tree applies, as git reads them. --exclude and --only take .gitignore lines too, so vendor, /vendor, vendor/ and !keep mean what they mean in git.' }
+  { icon: 'eye', title: 'Says what it skipped', body: 'The skipped section separates text loco could not count, which is a gap, from binaries, which never had lines, each by size. You can see whether the count is representative.' }
+  { icon: 'bolt', title: 'Fast on big trees', body: 'Sixteen walkers list directories at once while up to 64 counters read and scan, so the disk is never idle. A 125,000-file tree takes 1.2 seconds, against 1.9 for the Rust original.' }
+  { icon: 'braces', title: 'JSON for scripts', body: '--json prints the whole report for jq, CI, and dashboards. --by-file adds a row for every file under its language.' }
+  { icon: 'check', title: 'Exact, by specification', body: 'A written spec fixes every rule and every byte of output. loco matches the Rust loc byte for byte across 122 runs on every flag set, styled output included.' }
+  { icon: 'copy', title: 'Counts each file once', body: 'Give it overlapping paths, like src/main.rs src, and a file reached twice counts once. Links are never followed, so nothing is counted through a loop.' }
+  { icon: 'cube', title: 'One small binary', body: 'No runtime, no dependencies, no configuration file. Build it once and it starts in milliseconds.' }
+]
+
+EXAMPLES = [
+  ['loco', 'Count the current directory']
+  ['loco src tests', 'Count several paths; a file reached twice counts once']
+  ["loco -e '*.min.js' .", 'Skip what that .gitignore line would']
+  ["loco -o '*_test.go' .", 'Count only what that .gitignore line would skip']
+  ['loco -x c -x c++ .', 'Skip whole languages']
+  ['loco -l rust .', 'Count one language']
+  ['loco -f -l python .', 'A row for every Python file']
+  ['loco --json . | jq .total.code', 'One number for a script']
+]
+
+FLAGS = [
+  ['-e, --exclude PATTERN', 'Skip what this .gitignore line would, under every PATH; repeatable']
+  ['-o, --only PATTERN', 'Count only what this .gitignore line would skip, under every PATH; repeatable']
+  ['-x, --exclude-lang NAME', 'Skip every file of a language, named as --languages prints it; repeatable']
+  ['-l, --only-lang NAME', 'Count only the files of a language; repeatable']
+  ['--no-ignore', 'Count files that .gitignore files exclude']
+  ['-f, --by-file', 'Add a row per file under its language']
+  ['--json', 'Print the report as JSON']
+  ['--no-color', 'Plain output even on a terminal']
+  ['--jobs N', 'Threads that read and count files (default: all cores)']
+  ['--languages', 'List the languages and the files each one claims']
+]
+
+INSTALL = '''
+mkdir -p ~/.local/bin
+git clone https://github.com/shreeve/nexus
+git clone https://github.com/shreeve/rig
+(cd nexus && zig build -Doptimize=safe)
+(cd rig && zig build && cp bin/rig ~/.local/bin/)
+git clone https://github.com/shreeve/loc
+(cd loc && rig/build.sh && cp bin/loco ~/.local/bin/)
+'''
+
+FAQ = [
+  ['Is it really free?', 'Yes. loco and the loc it ports are MIT-licensed: use it anywhere, for anything, with no account, telemetry, or license key.']
+  ['How is loco related to loc?', 'loc is a line counter in Rust by Philip Lindberg. loco is the same program written again in Rig, held to the same specification and the same expected output, byte for byte. The Rust code is untouched and lives beside it in the same repository.']
+  ['Why is it faster?', 'Both programs spend most of their time in the kernel opening and reading files. loco keeps more of those calls in flight at once: sixteen walker tasks list directories while counters read, and the PATHs themselves are checked in parallel. Its scanner also takes 17 to 20% less time on large files.']
+  ['Is it ever slower?', 'On tiny trees, by about 2 ms: Rig starts its worker threads and hands each file call to a pool, and that fixed cost shows when the whole run takes 5 to 13 ms. The table above shows every case, including those.']
+  ['Which platforms does it run on?', 'Unix-like systems. File names are handled as bytes, so names that are not UTF-8 are counted and shown lossily, never dropped. It is developed and measured on macOS.']
+  ['What counts as a comment?', 'Every line is exactly one of blank, comment, or code. A line with code and a trailing comment is code. Comment markers inside a string are text, and a Python docstring is a string, so it is code. Block comments nest where the language nests them. SPEC.md in the repository has every rule.']
+]
+
+fmtMs = (ms) -> if ms >= 100 then "#{Math.round(ms).toLocaleString()} ms" else "#{ms.toFixed(1)} ms"
+segStyle = (s) -> if s[1] then "color: #{s[1]}" else ''
+segClass = (s) -> [(if s[2] then 'font-bold' else ''), (if s[3] then 'opacity-60' else '')].join(' ')
+
+Icon = component
+  @name: string
+  @size?: string := 'size-5'
+  render
+    svg
+      viewBox: '0 0 24 24'
+      fill: 'none'
+      stroke: 'currentColor'
+      stroke-width: 2
+      stroke-linecap: 'round'
+      stroke-linejoin: 'round'
+      aria-hidden: 'true'
+      class: size
+      switch name
+        when 'sun'
+          circle cx: 12, cy: 12, r: 4
+          path d: 'M12 2v2M12 20v2m-7.07-15.07 1.41 1.41m11.32 11.32 1.41 1.41M2 12h2m16 0h2M6.34 17.66l-1.41 1.41M19.07 4.93l-1.41 1.41'
+        when 'moon'
+          path d: 'M12 3a6 6 0 0 0 9 9 9 9 0 1 1-9-9Z'
+        when 'langs'
+          path d: 'm18 16 4-4-4-4M6 8l-4 4 4 4m8.5-12-5 16'
+        when 'filter'
+          path d: 'M22 3H2l8 9.46V19l4 2v-8.54L22 3z'
+        when 'eye'
+          path d: 'M2.06 12.35a1 1 0 0 1 0-.7 10.75 10.75 0 0 1 19.88 0 1 1 0 0 1 0 .7 10.75 10.75 0 0 1-19.88 0'
+          circle cx: 12, cy: 12, r: 3
+        when 'bolt'
+          path d: 'M13 2 3 14h9l-1 8 10-12h-9l1-8z'
+        when 'braces'
+          path d: 'M8 3H7a2 2 0 0 0-2 2v5a2 2 0 0 1-2 2 2 2 0 0 1 2 2v5c0 1.1.9 2 2 2h1m8 0h1a2 2 0 0 0 2-2v-5c0-1.1.9-2 2-2a2 2 0 0 1-2-2V5a2 2 0 0 0-2-2h-1'
+        when 'check'
+          path d: 'M20 6 9 17l-5-5'
+        when 'copy'
+          rect x: 8, y: 8, width: 14, height: 14, rx: 2
+          path d: 'M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2'
+        when 'cube'
+          path d: 'M21 8a2 2 0 0 0-1-1.73l-7-4a2 2 0 0 0-2 0l-7 4A2 2 0 0 0 3 8v8a2 2 0 0 0 1 1.73l7 4a2 2 0 0 0 2 0l7-4A2 2 0 0 0 21 16Z'
+          path d: 'm3.3 7 8.7 5 8.7-5M12 22V12'
+        when 'arrow'
+          path d: 'M5 12h14m-7-7 7 7-7 7'
+
+GitHubMark = component
+  render
+    svg viewBox: '0 0 16 16', fill: 'currentColor', aria-hidden: 'true', class: 'size-5'
+      path d: 'M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.01 8.01 0 0 0 16 8c0-4.42-3.58-8-8-8Z'
+
+CopyButton = component
+  @text: string
+  @dark?: boolean := true
+  copied := false
+
+  copy: ->
+    try
+      await navigator.clipboard.writeText(text.trim())
+      copied = true
+      setTimeout (-> copied = false), 1600
+    catch
+      copied = false
+
+  render
+    button
+      type: 'button'
+      class: [
+        'shrink-0 rounded-md px-2.5 py-1 font-sans text-xs font-medium transition'
+        { 'text-stone-400 hover:bg-white/10 hover:text-white': dark, 'text-stone-500 hover:bg-stone-200 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-white': not dark }
+      ]
+      aria-label: 'Copy to the clipboard'
+      @click: copy
+      if copied
+        'Copied'
+      else
+        'Copy'
+
+# A terminal window, dark in both themes as terminals are.
+Window = component
+  @title: string
+  render
+    div class: 'overflow-hidden rounded-2xl bg-term text-stone-200 shadow-2xl shadow-stone-900/20 ring-1 ring-black/10 dark:shadow-black/40 dark:ring-white/10'
+      div class: 'flex items-center gap-2 border-b border-white/10 px-4 py-3'
+        span class: 'size-3 rounded-full bg-[#ff5f57]'
+        span class: 'size-3 rounded-full bg-[#febc2e]'
+        span class: 'size-3 rounded-full bg-[#28c840]'
+        span class: 'ml-3 truncate font-mono text-xs text-stone-400', title
+      slot
+
+Section = component
+  @id: string
+  @kicker: string
+  @title: string
+  @lede?: string := ''
+  render
+    section id: id, class: 'mx-auto max-w-6xl px-4 py-20 sm:px-6 sm:py-28'
+      div class: 'max-w-3xl'
+        p class: 'font-mono text-sm font-medium tracking-wide text-accent uppercase', kicker
+        h2 class: 'mt-3 text-3xl font-bold tracking-tight text-balance sm:text-4xl', title
+        if lede
+          p class: 'mt-4 text-lg leading-relaxed text-stone-600 text-pretty dark:text-stone-400', lede
+      div class: 'mt-12'
+        slot
+
+# The language bar loco draws above its table, as a band of color.
+Spectrum = component
+  render
+    div class: 'flex h-1.5 w-full overflow-hidden', aria-hidden: 'true'
+      for lang in LANGS
+        span key: lang[0], class: 'flex-1', style: "background: #{lang[1]}"
+
+# The theme is a class on <html>, which index.html sets before the page
+# paints; the choice is remembered when the browser allows it.
+Nav = component
+  theme := if document.documentElement.classList.contains('dark') then 'dark' else 'light'
+
+  ~> document.documentElement.classList.toggle('dark', theme is 'dark')
+
+  toggle: ->
+    theme = if theme is 'dark' then 'light' else 'dark'
+    try localStorage.setItem('theme', theme)
+
+  render
+    header class: 'sticky top-0 z-30 border-b border-stone-200/70 bg-stone-50/80 backdrop-blur-lg dark:border-stone-800/70 dark:bg-stone-950/80'
+      Spectrum
+      div class: 'mx-auto flex h-16 max-w-6xl items-center gap-6 px-4 sm:px-6'
+        a href: '#top', class: 'flex items-center gap-2 font-mono text-lg font-bold tracking-tight'
+          span class: 'grid size-8 place-items-center rounded-lg bg-stone-900 text-sm text-accent-soft dark:bg-stone-100 dark:text-accent', '{}'
+          'loco'
+        nav class: 'hidden flex-1 items-center gap-6 text-sm font-medium text-stone-600 md:flex dark:text-stone-400'
+          a href: '#demo', class: 'hover:text-stone-900 dark:hover:text-white', 'Demo'
+          a href: '#features', class: 'hover:text-stone-900 dark:hover:text-white', 'Features'
+          a href: '#speed', class: 'hover:text-stone-900 dark:hover:text-white', 'Speed'
+          a href: '#languages', class: 'hover:text-stone-900 dark:hover:text-white', 'Languages'
+          a href: '#install', class: 'hover:text-stone-900 dark:hover:text-white', 'Install'
+          a href: '#faq', class: 'hover:text-stone-900 dark:hover:text-white', 'FAQ'
+        div class: 'ml-auto flex items-center gap-1 md:ml-0'
+          a href: REPO, class: 'grid size-9 place-items-center rounded-lg text-stone-600 hover:bg-stone-200/70 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-white', aria-label: 'loco on GitHub'
+            GitHubMark
+          button
+            type: 'button'
+            class: 'grid size-9 place-items-center rounded-lg text-stone-600 hover:bg-stone-200/70 hover:text-stone-900 dark:text-stone-400 dark:hover:bg-stone-800 dark:hover:text-white'
+            aria-label: if theme is 'dark' then 'Switch to the light theme' else 'Switch to the dark theme'
+            @click: toggle
+            Icon name: (if theme is 'dark' then 'sun' else 'moon')
+
+Hero = component
+  render
+    section id: 'top', class: 'relative overflow-hidden'
+      div class: 'pointer-events-none absolute inset-x-0 -top-40 -z-10 mx-auto h-[36rem] max-w-5xl rounded-full bg-gradient-to-tr from-accent/25 via-fuchsia-500/10 to-sky-500/20 blur-3xl dark:from-accent/20 dark:via-fuchsia-500/10 dark:to-sky-500/10', aria-hidden: 'true'
+      div class: 'mx-auto grid max-w-6xl gap-14 px-4 pt-20 pb-16 sm:px-6 sm:pt-28 lg:grid-cols-[1.2fr_1fr] lg:items-center'
+        div
+          a href: '#faq', class: 'inline-flex items-center gap-2 rounded-full border border-stone-300/80 bg-white/70 px-3 py-1 text-xs font-medium text-stone-700 shadow-sm dark:border-stone-700 dark:bg-stone-900/70 dark:text-stone-300'
+            span class: 'size-1.5 rounded-full bg-emerald-500'
+            'Free and open source · MIT'
+          h1 class: 'mt-6 max-w-4xl text-5xl font-extrabold tracking-tight text-balance sm:text-6xl xl:text-7xl'
+            'Count every line of code. '
+            span class: 'bg-gradient-to-r from-accent to-rose-500 bg-clip-text text-transparent', 'Fast.'
+          p class: 'mt-6 max-w-2xl text-lg leading-relaxed text-stone-600 text-pretty sm:text-xl dark:text-stone-400'
+            'loco counts lines of code, comments, and blanks across a tree in 36 languages. It honors your .gitignore, skips binaries and links, and tells you exactly what it skipped, so you know the count is real.'
+          div class: 'mt-10 flex flex-wrap items-center gap-3'
+            a href: '#install', class: 'inline-flex items-center gap-2 rounded-xl bg-stone-900 px-5 py-3 text-sm font-semibold text-white shadow-lg shadow-stone-900/20 transition hover:bg-stone-700 dark:bg-white dark:text-stone-900 dark:hover:bg-stone-200'
+              'Install loco'
+              Icon name: 'arrow', size: 'size-4'
+            a href: REPO, class: 'inline-flex items-center gap-2 rounded-xl border border-stone-300 bg-white/60 px-5 py-3 text-sm font-semibold text-stone-800 transition hover:border-stone-400 hover:bg-white dark:border-stone-700 dark:bg-stone-900/60 dark:text-stone-100 dark:hover:border-stone-500'
+              GitHubMark
+              'View the source'
+          dl class: 'mt-14 grid max-w-lg grid-cols-2 gap-x-8 gap-y-8'
+            Stat value: '1.2 s', label: 'for 125,268 files'
+            Stat value: '35–50%', label: 'faster than the Rust loc on large trees'
+            Stat value: '36', label: 'languages'
+            Stat value: '0', label: 'dependencies'
+        HeroCard
+
+HeroCard = component
+  render
+    div class: 'rounded-3xl border border-stone-200/80 bg-white/70 p-6 shadow-xl shadow-stone-900/5 backdrop-blur sm:p-8 dark:border-stone-800 dark:bg-stone-900/70 dark:shadow-black/30'
+      p class: 'font-mono text-xs font-medium tracking-wide text-stone-500 uppercase dark:text-stone-400', 'Every file of a 125,268-file tree'
+      div class: 'mt-5 space-y-4'
+        HeroBar label: 'loc · Rust', ms: 1881, loco: false
+        HeroBar label: 'loco · Rig', ms: 1216, loco: true
+      p class: 'mt-8 font-mono text-xs font-medium tracking-wide text-stone-500 uppercase dark:text-stone-400', 'The same, on one thread'
+      div class: 'mt-5 space-y-4'
+        HeroBar label: 'loc · Rust', ms: 3377, loco: false
+        HeroBar label: 'loco · Rig', ms: 1692, loco: true
+      p class: 'mt-8 border-t border-stone-200 pt-4 text-xs leading-relaxed text-stone-500 dark:border-stone-800 dark:text-stone-400', 'Fastest of seven interleaved runs. Both print the same report, byte for byte.'
+
+HeroBar = component
+  @label: string
+  @ms: number
+  @loco: boolean
+  render
+    div
+      div class: 'flex items-baseline justify-between text-sm'
+        span class: ['font-medium', { 'text-stone-900 dark:text-white': loco, 'text-stone-500 dark:text-stone-400': not loco }], label
+        span class: ['font-mono font-semibold', { 'text-accent dark:text-accent-soft': loco, 'text-stone-500 dark:text-stone-400': not loco }], "#{(ms / 1000).toFixed(2)} s"
+      div class: 'mt-2 h-3 rounded-full bg-stone-100 dark:bg-stone-800'
+        div
+          class: ['h-full rounded-full', { 'bg-gradient-to-r from-accent to-rose-500': loco, 'bg-stone-300 dark:bg-stone-600': not loco }]
+          style: "width: #{100 * ms / 3377}%"
+
+Stat = component
+  @value: string
+  @label: string
+  render
+    div class: 'flex flex-col border-l-2 border-accent/60 pl-4'
+      dt class: 'text-sm leading-snug text-stone-500 dark:text-stone-400', label
+      dd class: 'order-first text-3xl font-bold tracking-tight whitespace-nowrap', value
+
+Demo = component
+  demo := null
+  tab := 'table'
+
+  mounted: ->
+    try
+      demo = await (await fetch('demo.json')).json()
+    catch
+      demo = null
+
+  render
+    Section id: 'demo', kicker: 'See it run', title: 'One command, the whole picture', lede: 'This is loco on the Rip repository: a bar of each language’s share, then lines, blanks, comments, and code per language, then what was skipped and why. On a terminal it is in color; pipe it and it is plain text.'
+      div class: 'mb-4 inline-flex rounded-xl border border-stone-200 bg-white p-1 text-sm font-medium dark:border-stone-800 dark:bg-stone-900'
+        button
+          type: 'button'
+          class: ['rounded-lg px-4 py-1.5 transition', { 'bg-stone-900 text-white dark:bg-white dark:text-stone-900': tab is 'table', 'text-stone-500 hover:text-stone-900 dark:hover:text-white': tab isnt 'table' }]
+          @click: (-> tab = 'table')
+          'Table'
+        button
+          type: 'button'
+          class: ['rounded-lg px-4 py-1.5 transition', { 'bg-stone-900 text-white dark:bg-white dark:text-stone-900': tab is 'json', 'text-stone-500 hover:text-stone-900 dark:hover:text-white': tab isnt 'json' }]
+          @click: (-> tab = 'json')
+          'JSON'
+      if demo
+        if tab is 'table'
+          Window title: '~/code — zsh'
+            div class: 'overflow-x-auto p-5 font-mono text-[11px] leading-[1.45] sm:text-[13px]'
+              div class: 'mb-3 whitespace-pre text-stone-400'
+                span class: 'text-emerald-400', '$ '
+                span class: 'text-stone-100', demo.table.cmd
+              for line, i in demo.table.lines
+                div key: i, class: 'min-h-[1.45em] whitespace-pre'
+                  for seg, j in line
+                    span key: j, class: segClass(seg), style: segStyle(seg), seg[0]
+        else
+          Window title: '~/code — zsh'
+            div class: 'overflow-x-auto p-5 font-mono text-[11px] leading-[1.45] sm:text-[13px]'
+              div class: 'mb-3 whitespace-pre text-stone-400'
+                span class: 'text-emerald-400', '$ '
+                span class: 'text-stone-100', demo.json.cmd
+              pre class: 'text-sky-200', demo.json.text
+      else
+        Window title: '~/code — zsh'
+          div class: 'p-5 font-mono text-sm text-stone-400', 'Loading the demo…'
+
+Features = component
+  render
+    Section id: 'features', kicker: 'Features', title: 'A line counter you can trust', lede: 'Most counters give you a number. loco also tells you what that number covers.'
+      div class: 'grid gap-px overflow-hidden rounded-2xl border border-stone-200 bg-stone-200 sm:grid-cols-2 lg:grid-cols-4 dark:border-stone-800 dark:bg-stone-800'
+        for f in FEATURES
+          div key: f.title, class: 'bg-white p-6 dark:bg-stone-900'
+            div class: 'grid size-10 place-items-center rounded-xl bg-accent/10 text-accent dark:bg-accent/15 dark:text-accent-soft'
+              Icon name: f.icon
+            h3 class: 'mt-5 font-semibold', f.title
+            p class: 'mt-2 text-sm leading-relaxed text-stone-600 dark:text-stone-400', f.body
+
+Bar = component
+  @label: string
+  @ms: number
+  @max: number
+  @loco: boolean
+  render
+    div class: 'flex items-center gap-3'
+      span class: 'w-20 shrink-0 font-mono text-xs text-stone-500 dark:text-stone-400', label
+      div class: 'h-6 flex-1 rounded-md bg-stone-100 dark:bg-stone-800/60'
+        div
+          class: ['flex h-full items-center justify-end rounded-md px-2 font-mono text-[11px] font-semibold whitespace-nowrap', { 'bg-gradient-to-r from-accent to-rose-500 text-white': loco, 'bg-stone-300 text-stone-700 dark:bg-stone-600 dark:text-stone-100': not loco }]
+          style: "width: #{Math.max(12, 100 * ms / max)}%"
+          fmtMs(ms)
+
+SpeedRow = component
+  @row: any
+  render
+    div class: 'grid gap-3 py-5 md:grid-cols-[18rem_1fr_6rem] md:items-center md:gap-6'
+      div
+        div class: 'font-medium', row.run
+        div class: 'mt-1 truncate font-mono text-xs text-stone-500 dark:text-stone-400', row.cmd
+      div class: 'space-y-1.5'
+        Bar label: 'loc', ms: row.rust, max: Math.max(row.rust, row.loco), loco: false
+        Bar label: 'loco', ms: row.loco, max: Math.max(row.rust, row.loco), loco: true
+      div class: 'md:text-right'
+        if row.loco < row.rust
+          span class: 'font-mono text-lg font-bold text-accent dark:text-accent-soft', "#{(row.rust / row.loco).toFixed(2)}×"
+          span class: 'ml-1 text-xs text-stone-500 md:ml-0 md:block', 'faster'
+        else
+          span class: 'font-mono text-lg font-bold text-stone-500', "+#{(row.loco - row.rust).toFixed(1)} ms"
+          span class: 'ml-1 text-xs text-stone-500 md:ml-0 md:block', 'slower'
+
+Speed = component
+  render
+    Section id: 'speed', kicker: 'Speed', title: 'Faster than the Rust original where it counts', lede: 'loco is a port of loc, a fast Rust line counter. On large trees it finishes in half to two thirds of the time. On tiny ones, Rust’s faster start wins by about 2 ms. Every number is below.'
+      div class: 'rounded-2xl border border-stone-200 bg-white px-5 sm:px-8 dark:border-stone-800 dark:bg-stone-900'
+        h3 class: 'pt-6 text-sm font-semibold tracking-wide text-stone-500 uppercase dark:text-stone-400', 'Large trees'
+        div class: 'divide-y divide-stone-100 dark:divide-stone-800'
+          for row in LARGE
+            SpeedRow key: row.run, row: row
+        h3 class: 'border-t border-stone-200 pt-6 text-sm font-semibold tracking-wide text-stone-500 uppercase dark:border-stone-800 dark:text-stone-400', 'Small trees'
+        div class: 'divide-y divide-stone-100 dark:divide-stone-800'
+          for row in SMALL
+            SpeedRow key: row.run, row: row
+      p class: 'mt-6 max-w-3xl text-sm leading-relaxed text-stone-500 dark:text-stone-400'
+        'Fastest of seven interleaved runs on a 10-core Mac (4 performance cores), with both programs producing identical output. trig is a 125,268-file, 905 MB source tree. The full table and how it was measured are in '
+        a href: "#{REPO}/blob/main/rig/DESIGN.md#speed", class: 'font-medium text-stone-800 underline decoration-accent/50 underline-offset-2 hover:decoration-accent dark:text-stone-200', 'rig/DESIGN.md'
+        '.'
+
+Languages = component
+  render
+    Section id: 'languages', kicker: 'Languages', title: '36 languages, one table', lede: 'Each with its own rules for strings, interpolation, line comments, and block comments, nested where the language nests them. Embedded <script> and <style> blocks count by their own rules.'
+      ul class: 'grid grid-cols-2 gap-2 sm:grid-cols-3 lg:grid-cols-4'
+        for lang in LANGS
+          li key: lang[0], class: 'flex items-start gap-3 rounded-xl border border-stone-200 bg-white px-4 py-3 dark:border-stone-800 dark:bg-stone-900'
+            span class: 'mt-1.5 size-2.5 shrink-0 rounded-full ring-1 ring-black/10 dark:ring-white/20', style: "background: #{lang[1]}"
+            div class: 'min-w-0'
+              div class: 'text-sm font-semibold', lang[0]
+              div class: 'mt-0.5 font-mono text-[11px] leading-snug break-words text-stone-500 dark:text-stone-400', lang[2]
+
+Usage = component
+  render
+    Section id: 'usage', kicker: 'Usage', title: 'Flags you already know', lede: 'Patterns are .gitignore lines, so there is nothing new to learn. --jobs bounds the threads and never changes the output.'
+      div class: 'grid gap-8 lg:grid-cols-2'
+        Window title: 'examples'
+          ul class: 'divide-y divide-white/5'
+            for ex in EXAMPLES
+              li key: ex[0], class: 'flex items-center gap-3 px-5 py-3'
+                div class: 'min-w-0 flex-1'
+                  div class: 'overflow-x-auto font-mono text-sm whitespace-nowrap text-stone-100'
+                    span class: 'text-emerald-400', '$ '
+                    ex[0]
+                  div class: 'mt-1 text-xs text-stone-400', ex[1]
+                CopyButton text: ex[0]
+        div class: 'overflow-hidden rounded-2xl border border-stone-200 bg-white dark:border-stone-800 dark:bg-stone-900'
+          div class: 'border-b border-stone-200 px-5 py-3 font-mono text-sm dark:border-stone-800'
+            'loco [OPTIONS] [PATH...]'
+          dl class: 'divide-y divide-stone-100 dark:divide-stone-800'
+            for flag in FLAGS
+              div key: flag[0], class: 'grid gap-1 px-5 py-3 sm:grid-cols-[13rem_1fr] sm:gap-4'
+                dt class: 'font-mono text-[13px] font-medium whitespace-nowrap text-accent dark:text-accent-soft', flag[0]
+                dd class: 'text-sm text-stone-600 dark:text-stone-400', flag[1]
+
+Install = component
+  render
+    Section id: 'install', kicker: 'Install', title: 'Build it in a minute', lede: 'loco is built from source with Rig, which builds with Zig 0.17.0. These lines clone Rig and its parser generator, build both, then build loco and put it on your PATH.'
+      div class: 'grid gap-8 lg:grid-cols-[1fr_20rem]'
+        Window title: 'install'
+          div class: 'flex items-start gap-3 p-5'
+            pre class: 'min-w-0 flex-1 overflow-x-auto font-mono text-[12px] leading-relaxed text-stone-100 sm:text-[13px]', INSTALL.trim()
+            CopyButton text: INSTALL
+        ol class: 'space-y-5 text-sm leading-relaxed text-stone-600 dark:text-stone-400'
+          Step n: 1, title: 'Get Zig 0.17.0', body: 'From ziglang.org, or with mise install in the rig checkout.'
+          Step n: 2, title: 'Build Rig', body: 'It needs Nexus, its parser generator, cloned beside it.'
+          Step n: 3, title: 'Build loco', body: 'rig/build.sh runs the rig on your PATH and writes bin/loco. These lines put both in ~/.local/bin, which must be on your PATH.'
+          Step n: 4, title: 'Count', body: 'Run loco in any directory, or loco --help for the flags.'
+
+Step = component
+  @n: number
+  @title: string
+  @body: string
+  render
+    li class: 'flex gap-4'
+      span class: 'grid size-7 shrink-0 place-items-center rounded-full bg-accent/10 font-mono text-xs font-bold text-accent dark:bg-accent/15 dark:text-accent-soft', "#{n}"
+      div
+        div class: 'font-semibold text-stone-900 dark:text-stone-100', title
+        div class: 'mt-0.5', body
+
+About = component
+  render
+    section class: 'mx-auto max-w-6xl px-4 sm:px-6'
+      div class: 'relative overflow-hidden rounded-3xl bg-stone-900 px-6 py-14 text-stone-100 sm:px-12 dark:bg-stone-900 dark:ring-1 dark:ring-stone-800'
+        div class: 'pointer-events-none absolute -top-24 -right-24 size-80 rounded-full bg-accent/30 blur-3xl', aria-hidden: 'true'
+        div class: 'relative grid gap-10 lg:grid-cols-[1.4fr_1fr] lg:items-center'
+          div
+            p class: 'font-mono text-sm font-medium tracking-wide text-accent-soft uppercase', 'Built with Rig'
+            h2 class: 'mt-3 text-3xl font-bold tracking-tight text-balance sm:text-4xl', 'The same program, in a third fewer lines'
+            p class: 'mt-4 text-lg leading-relaxed text-stone-300 text-pretty'
+              'loco is '
+              a href: UPSTREAM, class: 'font-medium text-white underline decoration-accent-soft/60 underline-offset-2 hover:decoration-accent-soft', 'loc'
+              ', Philip Lindberg’s Rust line counter, written again in '
+              a href: RIG, class: 'font-medium text-white underline decoration-accent-soft/60 underline-offset-2 hover:decoration-accent-soft', 'Rig'
+              ', a systems language with Zig’s speed and Rust-style ownership. The same specification and the same expected output hold both programs to every byte; the Rust code is untouched, beside it in the same repository.'
+          dl class: 'grid grid-cols-2 gap-6'
+            div
+              dt class: 'text-sm text-stone-400', 'Rust source'
+              dd class: 'mt-1 font-mono text-3xl font-bold', '3,014'
+              dd class: 'text-xs text-stone-500', 'lines of code'
+            div
+              dt class: 'text-sm text-stone-400', 'Rig source'
+              dd class: 'mt-1 font-mono text-3xl font-bold text-accent-soft', '2,051'
+              dd class: 'text-xs text-stone-500', 'lines of code'
+            div
+              dt class: 'text-sm text-stone-400', 'Byte comparisons'
+              dd class: 'mt-1 font-mono text-3xl font-bold', '122'
+              dd class: 'text-xs text-stone-500', 'identical, every change'
+            div
+              dt class: 'text-sm text-stone-400', 'Checks'
+              dd class: 'mt-1 font-mono text-3xl font-bold', '58'
+              dd class: 'text-xs text-stone-500', 'unit and command-line'
+
+Faq = component
+  render
+    Section id: 'faq', kicker: 'FAQ', title: 'Questions'
+      div class: 'divide-y divide-stone-200 border-y border-stone-200 dark:divide-stone-800 dark:border-stone-800'
+        for q in FAQ
+          details key: q[0], class: 'group py-5'
+            summary class: 'flex cursor-pointer list-none items-center justify-between gap-6 font-semibold [&::-webkit-details-marker]:hidden'
+              q[0]
+              span class: 'grid size-6 shrink-0 place-items-center rounded-full border border-stone-300 font-mono text-sm text-stone-500 transition group-open:rotate-45 dark:border-stone-700', '+'
+            p class: 'mt-3 max-w-3xl leading-relaxed text-stone-600 dark:text-stone-400', q[1]
+
+Footer = component
+  render
+    footer class: 'mt-24 border-t border-stone-200 dark:border-stone-800'
+      div class: 'mx-auto flex max-w-6xl flex-col gap-4 px-4 py-10 text-sm text-stone-500 sm:flex-row sm:items-center sm:justify-between sm:px-6 dark:text-stone-400'
+        div
+          span class: 'font-mono font-bold text-stone-900 dark:text-stone-100', 'loco'
+          ' · MIT license · free forever'
+        div class: 'flex flex-wrap gap-x-5 gap-y-2'
+          a href: REPO, class: 'hover:text-stone-900 dark:hover:text-white', 'GitHub'
+          a href: UPSTREAM, class: 'hover:text-stone-900 dark:hover:text-white', 'loc (Rust)'
+          a href: RIG, class: 'hover:text-stone-900 dark:hover:text-white', 'Rig'
+          span
+            'This page is written in '
+            a href: RIP, class: 'underline decoration-stone-400/50 underline-offset-2 hover:text-stone-900 dark:hover:text-white', 'Rip'
+
+Page = component
+  render
+    div
+      Nav
+      main
+        Hero
+        Demo
+        Features
+        Speed
+        Languages
+        Usage
+        Install
+        About
+        Faq
+      Footer
+
+document.querySelector('#app').replaceChildren()
+Page.mount '#app'
