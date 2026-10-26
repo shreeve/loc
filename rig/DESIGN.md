@@ -3,9 +3,10 @@
 `rig/` holds a second implementation of loc, built as `bin/loco`. It is
 held to `SPEC.md` and the four expected documents in `fixtures/`, byte
 for byte, styled output included. The Rust code is never changed; the
-Rig version sits beside it. Toolchain: Rig 0.2.9 at main 60d2b2394 or
-later, whose blocking pool (Rig #624) bounds the file calls in flight,
-and Zig 0.17.0.
+Rig version sits beside it. Toolchain: Rig 0.2.9 at main 6c3f35b78 or
+later, and Zig 0.17.0. That Rig's blocking pool (Rig #624) bounds the
+file calls in flight, and an optional field of a parameter moves like
+any other field (Rig #688).
 
 ## Principles
 

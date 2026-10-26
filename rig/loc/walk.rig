@@ -45,8 +45,7 @@ obj Sums
       .unreadable(n) => tally(!@text, String("unreadable"), 1, n)
       .dropped => pass
 
-  sub add(!@, other: Sums)
-    o = <other
+  sub add(!@, o: Sums)
     for i in 0..@langs.len
       !@langs[i].add(o.langs[i])
       @files[i] += o.files[i]
@@ -388,8 +387,7 @@ fun overlapping(resolved: ?List[String?]) -> List[Bool]
     !flags.push(shares)
   flags
 
-sub walk(root: ?String, opts: ?Options, checked: Root, sender: !Sender)!
-  c = <checked
+sub walk(root: ?String, opts: ?Options, c: Root, sender: !Sender)!
   if c.kind != .directory
     !sender.send(Job(path: String(root), device: c.kind != .file))!
     return

@@ -135,7 +135,7 @@ Standard library only. Unix only: file names are handled as bytes.
 
 ## The Rig version
 
-`rig/` holds a second implementation of loc in [Rig](https://github.com/shreeve/rig), built as `bin/loco`. It is held to the same `SPEC.md` and the same four expected documents, byte for byte, styled output included. On large trees it runs 23 to 42% faster than the Rust; on small ones it is a few milliseconds slower. The Rust code is never changed. The Rig version needs Rig 0.2.9 at main 60d2b2394 or later, and Zig 0.17.0; `rig/DESIGN.md` describes the design and its measurements.
+`rig/` holds a second implementation of loc in [Rig](https://github.com/shreeve/rig), built as `bin/loco`. It is held to the same `SPEC.md` and the same four expected documents, byte for byte, styled output included. On large trees it runs 23 to 42% faster than the Rust; on small ones it is a few milliseconds slower. The Rust code is never changed. The Rig version needs Rig 0.2.9 at main 6c3f35b78 or later, and Zig 0.17.0; `rig/DESIGN.md` describes the design and its measurements.
 
 ```
 rig/build.sh                     # bin/loco
