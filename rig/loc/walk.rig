@@ -3,6 +3,7 @@
 
 use std.file
 use std.math
+use std.par
 use std.slices
 use std.task
 use std.text
@@ -12,6 +13,7 @@ SMALL = 65536         # read whole to look at its head, in one call
 MOST_WORKERS = 64     # task.workers' cap
 COUNTERS = 64         # counting tasks; each waits out its file calls, so --jobs sets workers, not reads
 WALKERS = 16          # walker tasks listing directories at once, overlapping their calls
+CHECKERS = 16         # tasks checking PATHs at once
 
 obj Skipped
   files: Int = 0
@@ -104,8 +106,6 @@ obj Job
   device: Bool = false
 
 pub fun count_trees(table: ?Table, opts: ?Options, checked: List[Root]) -> Sums!
-  if opts.jobs as asked
-    _ = task.workers(math.min(asked, MOST_WORKERS))  # before the first task, which starts the workers
   filter = lang_filter(table, opts)
   jobs = *Chan[Job](1024)
   # A counter starts as each of the first COUNTERS files is sent, so a small
@@ -346,8 +346,8 @@ sub walk_roots(table: ?Table, filter: ?LangFilter, opts: ?Options, checked: List
   asked = *Cell(0)
   resolved: List[String?] = List()
   if opts.roots.len > 1
-    for root in opts.roots
-      !resolved.push(file.realpath(root) catch none)
+    for c in ?checked
+      !resolved.push(+c.resolved)
   shared = Sender(jobs: +jobs, asks: +asks, asked: +asked, table: table, filter: filter, walkers: *Cell(1), seen: Set[String]())
   sharing = overlapping(resolved)
   for c, i in <checked
@@ -464,11 +464,26 @@ fun join(dir: ?String, name: ?String) -> String
 
 # What `check_root` found of a PATH, so the walk asks no second time.
 pub obj Root
-  kind: file.Kind
+  kind: file.Kind = .other
   entries: List[file.Entry]? = none  # a directory's listing
+  resolved: String? = none           # its real path, with several PATHs
+  pub failed: String? = none         # why it cannot be read
 
 # A PATH that cannot be read exits 2 here, not as a skipped file later.
-pub fun check_root(root: ?String) -> Root!
+# The PATHs are checked on several tasks, so their pool calls overlap;
+# the workers are set first, as the first task starts them.
+pub fun check_roots(opts: ?Options) -> List[Root]
+  if opts.jobs as asked
+    _ = task.workers(math.min(asked, MOST_WORKERS))
+  several = opts.roots.len > 1
+  par.map(?opts.roots, |+several, root| check_root(root, several), limit: CHECKERS)
+
+fun check_root(root: ?String, several: Bool) -> Root
+  c = look(root) catch |e| return Root(failed: reason(e))
+  c.resolved = file.realpath(root) catch none if several
+  c
+
+fun look(root: ?String) -> Root!
   info = file.stat(root)! ?? return file.FileError.not_found
   if info.kind == .directory
     entries = file.read_dir(root)! ?? return file.FileError.not_found

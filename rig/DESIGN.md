@@ -122,6 +122,9 @@ row sorts by its own key, so no order can change the output.
   output, and hands what it
   found to the walk, which neither stats nor lists it again; `realpath`
   runs only with several PATHs (`~/Data/Code/rig`: 168 ms to 135).
+  `check_roots` checks the PATHs on 16 tasks (`par.map`), so their pool
+  calls overlap, and `main` warns in PATH order: 20,000 PATHs took
+  1,141 ms one at a time and 524 ms so (4 tasks: 877, 64: 709).
 - **The walk** skips `.git`, links (tested first, since `read_dir`
   follows links for `kind`), and other kinds (device, FIFO, broken
   link). A directory that cannot be listed is a `cannot read` warning
@@ -200,11 +203,10 @@ holds 125,268 files.
 | `--json .` of this repository | 7.3 ms | 9.8 ms | 1.34x |
 | `--json -f fixtures` | 6.7 ms | 8.7 ms | 1.30x |
 | `--json` of an empty directory | 4.6 ms | 5.3 ms | 1.15x |
-| 20,000 files given as PATHs (load 3.5) | 632 ms | 1,061 ms | 1.68x |
+| 20,000 files given as PATHs (load 7 to 14) | 651 ms | 524 ms | 0.80x |
 
 A small tree pays about 2 ms more than Rust: starting every worker, and
-a pool hop for each file call. Each PATH costs a few serial pool calls
-(`stat`, `open`, `realpath`) before the walk.
+a pool hop for each file call.
 
 ## Where the two implementations differ
 

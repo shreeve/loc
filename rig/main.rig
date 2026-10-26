@@ -19,14 +19,12 @@ fun main() -> Int
       say(loc.language_list(table, not no_color and terminal()))
       0
     .run(opts)
+      checked = loc.check_roots(opts)
       readable = true
-      checked: List[loc.Root] = List()
-      for root in opts.roots
-        got = loc.check_root(root) catch |e|
-          warn(String("loc: ", loc.lossy(root), ": ", loc.reason(e)))
+      for c, i in ?checked
+        if ?c.failed as why
+          warn(String("loc: ", loc.lossy(opts.roots[i]), ": ", why))
           readable = false
-          continue
-        !checked.push(<got)
       return 2 if not readable
       sums = loc.count_trees(table, opts, <checked) catch |e|
         warn(String("loc: ", e))
