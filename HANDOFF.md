@@ -22,7 +22,7 @@ The resume point for anyone, human or agent. Read it first, then
     16 tasks.
   - small trees: about 2 ms slower (5–13 ms runs), from starting
     Rig's workers and a pool hop per file call.
-- **Toolchain:** Rig at main 6c3f35b78 or later, Zig 0.17.0.
+- **Toolchain:** Rig at main 10548e911 or later (Rig #798), Zig 0.17.0.
 - **Website:** `website/` holds the product page;
   `.github/workflows/pages.yml` publishes it when `website/` changes on
   `main`. GitHub Pages must be set to deploy from GitHub Actions

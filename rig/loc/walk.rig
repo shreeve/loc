@@ -284,6 +284,7 @@ pub fun reason(e: ?error) -> String
   match e
     file.FileError.not_found => String(MISSING)
     file.FileError.denied => String("permission denied")
+    file.FileError.not_permitted => String("permission denied")  # EPERM, which Rust also calls PermissionDenied
     file.FileError.is_directory => String("is a directory")
     file.FileError.not_directory => String("not a directory")
     _ => String(e)

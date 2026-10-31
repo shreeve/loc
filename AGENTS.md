@@ -38,7 +38,7 @@ Read [HANDOFF.md](HANDOFF.md) first for where things stand.
    several, with the machine's load noted. A change that does not pay is
    reverted. The table in DESIGN.md is the record, and the README and
    the website quote it.
-5. **Toolchain:** Rig at main 6c3f35b78 or later (Rig #688) and Zig
+5. **Toolchain:** Rig at main 10548e911 or later (Rig #798) and Zig
    0.17.0. The `rig` on PATH may be older, so give the gate `RIG=`
    explicitly.
 6. **Rig style** follows DESIGN.md's principles: sigils where effects
