@@ -105,7 +105,7 @@ obj Scanner
           break if i >= end or not (k.escape and buf[i] == '\')
           i += 2
         break if i >= end
-        if open as .kind(ki) and interp_opener(k, buf, i, end) as n
+        if open matches .kind(ki) and interp_opener(k, buf, i, end) as n
           !@nests.push(Nest(kind: ki, depth: 0))
           @open = none
           i += n
