@@ -3,12 +3,13 @@
 `rig/` holds a second implementation of loc, built as `bin/loco`. It is
 held to `SPEC.md` and the four expected documents in `fixtures/`, byte
 for byte, styled output included. The Rust code is never changed; the
-Rig version sits beside it. Toolchain: Rig 0.2.9 at main 10548e911 or
-later, and Zig 0.17.0. That Rig's blocking pool (Rig #624) bounds the
-file calls in flight, an optional field of a parameter moves like any
-other field (Rig #688), and `FileError` tells EPERM (`not_permitted`)
-from EACCES (`denied`) (Rig #798); loco words both as Rust does,
-"permission denied".
+Rig version sits beside it. Toolchain: Rig at main 81456f497 or later,
+and Zig 0.17.0. That Rig's blocking pool (Rig #624) bounds the file
+calls in flight, an optional field of a parameter moves like any other
+field (Rig #688), `FileError` tells EPERM (`not_permitted`) from EACCES
+(`denied`) (Rig #798), which loco words alike as Rust does, "permission
+denied", and a pattern over several fields binds them by name,
+`.between(:close)` (Rig #937, for v0.3.0).
 
 ## Principles
 
