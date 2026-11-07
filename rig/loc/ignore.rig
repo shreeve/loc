@@ -107,7 +107,7 @@ fun matches(p: ?Pattern, at: Int, subject: ?String) -> Bool
   match p.steps[at]
     .byte(b) => subject.len > 0 and subject[0] == b and matches(p, at + 1, subject[1..])
     .one => subject.len > 0 and subject[0] != '/' and matches(p, at + 1, subject[1..])
-    .class(set, inside)
+    .class(:set, :inside)
       subject.len > 0 and subject[0] != '/' and p.sets[set][subject[0]] == inside and matches(p, at + 1, subject[1..])
     .any
       for k in 0..subject.len + 1

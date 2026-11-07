@@ -35,15 +35,15 @@ obj Sums
 
   sub take(!@, table: ?Table, loaded: Loaded, path: String)
     match <loaded
-      .counted(lang, buf)
+      .counted(:lang, :buf)
         c = scan(table, lang, buf)
         !@langs[lang].add(c)
         @files[lang] += 1
         @bytes[lang] += buf.len
         if !@by_file as rows
           !rows.push(FileRow(lang: lang, path: <path, counts: c, bytes: buf.len))
-      .text(label, n) => tally(!@text, <label, 1, n)
-      .binary(label, n) => tally(!@binary, <label, 1, n)
+      .text(:label, bytes: n) => tally(!@text, <label, 1, n)
+      .binary(:label, bytes: n) => tally(!@binary, <label, 1, n)
       .unreadable(n) => tally(!@text, String("unreadable"), 1, n)
       .dropped => pass
 
