@@ -99,7 +99,7 @@ obj Scanner
               i += hashes
             continue
         # Escapes stay in this loop: a long literal is mostly runs and escapes.
-        while true
+        loop
           while i < end and not k.stop[buf[i]]
             i += 1
           break if i >= end or not (k.escape and buf[i] == '\')
