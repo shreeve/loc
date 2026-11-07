@@ -165,8 +165,8 @@ obj Scanner
         if opens_region(buf, i, end, l) as ri, after
           @outer = @lang
           match l.regions[ri]
-            .tag(_, _) => @pending = ri
-            .between(_, close, _)
+            .tag => @pending = ri
+            .between(:close)
               @region = ri
               @closer = close[0]
               @stops = ?l.region_stops[ri]
@@ -229,7 +229,7 @@ obj Scanner
     match open
       .kind(ki) => @lang.strings[ki].multiline
       .char => false
-      .rust_raw(_) => true
+      .rust_raw => true
 
 fun scan(table: ?Table, lang: Int, buf: ?String) -> Counts
   s = Scanner(table: table, buf: buf, outer: ?table.langs[lang], lang: ?table.langs[lang], stops: ?table.langs[lang].starts)
@@ -306,10 +306,10 @@ fun tag_boundary(buf: ?String, i: Int, end: Int, also: ?String) -> Bool
 fun opens_region(buf: ?String, i: Int, end: Int, l: ?Lang) -> (Int, Int)?
   for r, ri in ?l.regions
     match r
-      .tag(name, _)
+      .tag(:name)
         if starts_with_ci(buf, i + 1, end, name) and tag_boundary(buf, i + 1 + name.len, end, ">/")
           return ri, i + 1 + name.len
-      .between(open, _, _)
+      .between(:open)
         if starts_with_ci(buf, i, end, open)
           return ri, i + open.len
   none
@@ -317,13 +317,13 @@ fun opens_region(buf: ?String, i: Int, end: Int, l: ?Lang) -> (Int, Int)?
 # Where the region's closer ends; a tag with no `>` on the line closes at its end.
 fun closes_region(buf: ?String, i: Int, end: Int, r: ?Region) -> Int?
   match r
-    .tag(name, _)
+    .tag(:name)
       closes = starts_with(buf, i, end, "</") and starts_with_ci(buf, i + 2, end, name) and tag_boundary(buf, i + 2 + name.len, end, ">")
       return none if not closes
       if text.find_any[">"](buf[..end], i) as k
         return k + 1
       end
-    .between(_, close, _)
+    .between(:close)
       return none if not starts_with_ci(buf, i, end, close)
       i + close.len
 

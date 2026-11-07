@@ -512,8 +512,8 @@ sub prepare(langs: !List[Lang])
     sort.sort_by(!l.strings, |a, b| a.open.len > b.open.len)
     for r in l.regions
       want = match r
-        .tag(_, lang) => lang
-        .between(_, _, lang) => lang
+        .tag(:lang) => lang
+        .between(:lang) => lang
       !l.region_langs.push(slices.index_of(names, want) ?? panic("no language named", want))
     l.starts = WHITESPACE
     l.starts[U8('\')] = true
@@ -561,5 +561,5 @@ fun indexed(langs: List[Lang]) -> Table
 
 fun closer_first(r: ?Region) -> U8
   match r
-    .tag(_, _) => '<'
-    .between(_, close, _) => close[0]
+    .tag => '<'
+    .between(:close) => close[0]
