@@ -402,7 +402,7 @@ sub walk(root: ?String, opts: ?Options, c: Root, sender: !Sender)!
   )
   cx = Walk(pats: ?pats, no_ignore: opts.no_ignore)
   above = Ignores(files: ?stack)
-  walk_dir(root, rel, above, pats.only == none, cx, !sender, <c.entries)!
+  walk_dir(root, rel, above, pats.only == none, cx, !sender, listed: <c.entries)!
 
 # What every directory of one walk reads.
 obj Walk

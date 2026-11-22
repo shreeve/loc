@@ -103,10 +103,10 @@ pub fun parse(args: []Static, table: ?Table) -> Command!Usage
       "--no-color" => opts.no_color = true
       "--no-ignore" => opts.no_ignore = true
       "--by-file", "-f" => opts.by_file = true
-      _ if is(arg, "--exclude", "-e") => !opts.excludes.push(pattern(args, !i, "--exclude")!)
-      _ if is(arg, "--only", "-o") => !opts.only.push(pattern(args, !i, "--only")!)
-      _ if is(arg, "--exclude-lang", "-x") => opts.excluded_langs[language(table, args, !i, "--exclude-lang")!] = true
-      _ if is(arg, "--only-lang", "-l") => opts.only_langs[language(table, args, !i, "--only-lang")!] = true
+      _ if is(arg, "--exclude", short: "-e") => !opts.excludes.push(pattern(args, !i, "--exclude")!)
+      _ if is(arg, "--only", short: "-o") => !opts.only.push(pattern(args, !i, "--only")!)
+      _ if is(arg, "--exclude-lang", short: "-x") => opts.excluded_langs[language(table, args, !i, "--exclude-lang")!] = true
+      _ if is(arg, "--only-lang", short: "-l") => opts.only_langs[language(table, args, !i, "--only-lang")!] = true
       _ if is(arg, "--jobs")
         digits = value(args, !i, "--jobs") ?? ""
         n = text.parse_int(digits) catch return Usage.bad_jobs
