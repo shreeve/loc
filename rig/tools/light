@@ -9,6 +9,19 @@
 #
 # LIGHT_TREES (space-separated) replaces the trees outside this repository,
 # which are ~/Data/Code/trig and ~/Data/Code/rig when present.
+#
+# Where cpuq is installed (and LIGHT_NO_CPUQ is unset), every program that
+# computes runs in a `cpuq run` of its own, so the machine's line sees each
+# CPU the gate takes, and the script itself only orchestrates; run it as
+#
+#   cpuq run --driver --label loc:light -t 30m -- rig/tools/light RIG=...
+#
+# The builds are one task each (loco builds as one unit, so its Zig
+# compile is the task's own; Cargo at -j 1). The comparisons are one
+# `cpuq run -n N`, a case a task, with loco and loc at --jobs 2 but for the
+# --jobs 1 set and the first two cases, which keep the default (a job a
+# core); each program runs under `cpuq cap`, so a hang or a runaway fails
+# its case, not the gate.
 set -u
 for a in "$@"; do
   case $a in
@@ -22,6 +35,9 @@ work=$(mktemp -d "${TMPDIR:-/tmp}/loco-light.XXXXXX")
 trap 'rm -rf "$work"' EXIT
 start=$(date +%s)
 failed=()
+pool=
+if [ -z "${LIGHT_NO_CPUQ:-}" ] && command -v cpuq >/dev/null; then pool=1; fi
+export work pool
 
 # Runs one job, ticked with its time, or marked with its last lines kept.
 job() {
@@ -35,31 +51,28 @@ job() {
   fi
 }
 
+# CMD as one task of cpuq's, with a time limit and a label, or CMD itself.
+run() {
+  local limit=$1 label=$2; shift 2
+  if [ -n "$pool" ]; then cpuq run -t "$limit" --label "loc:$label" -- "$@"; else "$@"; fi
+}
+
 rust_loc() {
-  [ -x target/release/loc ] || cargo build --release -q
+  [ -x target/release/loc ] || run 10m cargo cargo build --release -q ${pool:+-j 1}
 }
 
 checks() {
-  LOC=$work/loco rig/test.sh >"$work/checks.log" 2>&1
+  run 10m checks env LOC="$work/loco" rig/test.sh >"$work/checks.log" 2>&1
   local rc=$?
   grep -E '^FAIL|passed' "$work/checks.log"
   return $rc
 }
 
-# Whether loco and the Rust loc print the same stdout and exit the same way.
-same() {
-  local want got
-  want=$(eval "target/release/loc $1" 2>/dev/null; echo "exit $?")
-  got=$(eval "\"\$work/loco\" $1" 2>/dev/null; echo "exit $?")
-  [ "$want" = "$got" ] && return 0
-  echo "differs: loc $1"
-  return 1
-}
-
 # Each tree with each flag set, and the several-PATH cases, each twice:
-# walker and counter tasks run in no fixed order.
-compare() {
-  local trees="fixtures/cases fixtures ." t f roots bad=0 n=0
+# walker and counter tasks run in no fixed order. One case a line: its
+# flags and paths.
+cases() {
+  local trees="fixtures/cases fixtures ." t f roots
   if [ -n "${LIGHT_TREES:-}" ]; then
     trees="$trees $LIGHT_TREES"
   else
@@ -67,15 +80,11 @@ compare() {
   fi
   local flags=("--json -f" "--no-ignore --json -f" "" "-f --no-color" "-l python --json" "-x rust --json" "-e '*.md' --json" "-o src --json -f" "--jobs 1 --json -f")
   for t in $trees; do
-    for f in "${flags[@]}"; do
-      for k in 1 2; do n=$((n + 1)); same "$f $t" || bad=$((bad + 1)); done
-    done
+    for f in "${flags[@]}"; do echo "$f $t"; echo "$f $t"; done
   done
   while IFS= read -r roots; do
-    for f in "--json -f" "--no-ignore -f"; do
-      for k in 1 2; do n=$((n + 1)); same "$f $roots" || bad=$((bad + 1)); done
-    done
-  done <<EOF
+    for f in "--json -f" "--no-ignore -f"; do echo "$f $roots"; echo "$f $roots"; done
+  done <<'CASES'
 rig rig/loc
 rig/loc rig ./rig/
 rig rig
@@ -84,16 +93,57 @@ rig/main.rig rig/main.rig
 fixtures fixtures/cases fixtures/expected
 rig src tests
 ./rig rig/ rig/.
-EOF
-  echo "$n runs, $bad differ"
-  [ $bad -eq 0 ]
+CASES
 }
 
-echo "light gate: loco with $RIG ($("$RIG" --version 2>/dev/null))"
-job "build loco (--release)" "$RIG" build --release -o "$work/loco" rig/main.rig
+# Whether loco and the Rust loc print the same stdout and exit the same
+# way on a case (its flags and paths), each under `cpuq cap` when pooled.
+same() {
+  local want got cap=
+  [ -n "$pool" ] && cap="cpuq cap --time 60s --mem 2G --"
+  want=$(eval "$cap target/release/loc $1" 2>/dev/null; echo "exit $?")
+  got=$(eval "$cap \"\$work/loco\" $1" 2>/dev/null; echo "exit $?")
+  [ "$want" = "$got" ] && return 0
+  echo "differs: loc $1"
+  return 1
+}
+export -f same
+
+compare() {
+  local n bad=0 i=0 line done
+  cases >"$work/all"
+  n=$(wc -l <"$work/all" | tr -d ' ')
+  if [ -z "$pool" ]; then
+    while IFS= read -r line; do same "$line" || bad=$((bad + 1)); done <"$work/all"
+    echo "$n runs, $bad differ"
+    [ "$bad" -eq 0 ]
+    return
+  fi
+  # Pooled, each case holds one CPU: --jobs 2, but for the --jobs 1 set and
+  # the first two cases, which keep the default.
+  while IFS= read -r line; do
+    i=$((i + 1))
+    case "$line" in *"--jobs 1"*) ;; *) [ $i -gt 2 ] && line="--jobs 2 $line" ;; esac
+    printf '%s\n' "$line"
+  done <"$work/all" >"$work/cases"
+  cpuq run --label loc:compare -n "$n" -t 2m -- bash -c \
+    'line=$(sed -n "${CPUQ_TASK}p" "$work/cases"); same "$line" >"$work/res.$CPUQ_TASK" 2>&1; echo "rc $?" >>"$work/res.$CPUQ_TASK"' \
+    >"$work/compare.log" 2>&1
+  done=$(ls "$work"/res.* 2>/dev/null | wc -l | tr -d ' ')
+  bad=$(cat "$work"/res.* 2>/dev/null | grep -c '^rc [1-9]')
+  grep -h '^differs' "$work"/res.* 2>/dev/null
+  if [ "$done" -ne "$n" ]; then
+    echo "$done of $n runs finished"; tail -3 "$work/compare.log"; bad=$((bad + n - done))
+  fi
+  echo "$n runs, $bad differ"
+  [ "$bad" -eq 0 ]
+}
+
+echo "light gate: loco with $RIG ($("$RIG" --version 2>/dev/null))${pool:+, through cpuq}"
+job "build loco (--release)" run 15m build "$RIG" build --release -o "$work/loco" rig/main.rig
 job "build the Rust loc" rust_loc
 if [ -x "$work/loco" ] && [ -x target/release/loc ]; then
-  job "unit tests (rig test rig/loc)" "$RIG" test rig/loc
+  job "unit tests (rig test rig/loc)" run 15m unit "$RIG" test rig/loc
   job "checks (rig/test.sh)" checks
   job "byte comparison with the Rust loc" compare
 fi
